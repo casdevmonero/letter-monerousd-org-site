@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<!--
+  Copyright (c) 2026, The MoneroUSD Protocol
+  Licensed under the MoneroUSD Protocol License (BSD-3-derived + attribution/display clause).
+  See LICENSE.MoneroUSD-Protocol. Forks must display this license and credit MoneroUSD.
+
+  Letter — 100% private P2P messaging. PQ-sealed end to end (ML-KEM-768 + ML-DSA-65 + blake3), zero metadata,
+  MonerousD payments built in. No email, no phone, no IP — your identity is your wallet address.
+  Static frontend; the BACKEND IS THE CHAIN — every seal/open/relay/pay runs in the user's own wallet + node
+  through the postMessage provider bridge. Zero VPS dependency. Design: black + orange, high-tech motion.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Letter — private messaging</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<style>
+  :root{
+    --bg:#060607; --bg2:#0b0b0e; --glass:rgba(18,18,22,.66); --glass2:rgba(26,26,32,.72);
+    --panelSolid:#101014; --hover:rgba(255,255,255,.045); --line:rgba(255,255,255,.07);
+    --text:#f4f1ee; --muted:#8b8b95; --dim:#5c5c66;
+    --acc:#ff7a00; --acc2:#ffab4d; --accDeep:#b53e00; --glow:rgba(255,122,0,.45);
+    --bubbleIn:rgba(255,255,255,.055); --ok:#39d98a; --pay:#ffb43c;
+    --rad:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,system-ui,sans-serif;background:var(--bg);color:var(--text);overflow:hidden;-webkit-font-smoothing:antialiased}
+  #bg{position:fixed;inset:0;z-index:0;display:block}
+  /* drifting aurora blobs behind everything (orange on black) */
+  .aurora{position:fixed;z-index:0;filter:blur(70px);opacity:.5;pointer-events:none;border-radius:50%}
+  .a1{width:520px;height:520px;left:-140px;top:-120px;background:radial-gradient(circle,rgba(255,122,0,.30),transparent 62%);animation:drift1 26s ease-in-out infinite}
+  .a2{width:600px;height:600px;right:-180px;bottom:-160px;background:radial-gradient(circle,rgba(181,62,0,.28),transparent 62%);animation:drift2 32s ease-in-out infinite}
+  .a3{width:360px;height:360px;left:45%;top:55%;background:radial-gradient(circle,rgba(255,171,77,.14),transparent 60%);animation:drift1 40s ease-in-out infinite reverse}
+  @keyframes drift1{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(80px,60px) scale(1.12)}}
+  @keyframes drift2{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(-90px,-50px) scale(1.15)}}
+  #app{position:relative;z-index:2;display:flex;height:100vh}
+  /* ── sidebar ── */
+  #side{width:340px;min-width:300px;background:var(--glass);backdrop-filter:blur(22px) saturate(140%);-webkit-backdrop-filter:blur(22px) saturate(140%);border-right:1px solid var(--line);display:flex;flex-direction:column}
+  .side-top{padding:14px 14px 12px;display:flex;gap:10px;align-items:center;border-bottom:1px solid var(--line)}
+  .brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:17px;letter-spacing:.3px}
+  .brand .bt{background:linear-gradient(120deg,#fff,var(--acc2) 55%,var(--acc));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .mark{width:38px;height:38px;display:flex;align-items:center;justify-content:center;position:relative;animation:pulse 3.6s ease-in-out infinite}
+  .mark svg{width:100%;height:100%;position:relative;z-index:1;filter:drop-shadow(0 0 8px var(--glow))}
+  @keyframes pulse{0%,100%{filter:drop-shadow(0 0 6px var(--glow))}50%{filter:drop-shadow(0 0 15px var(--glow))}}
+  .me{margin-left:auto;font-size:11px;color:var(--muted);text-align:right;max-width:150px;cursor:pointer;line-height:1.35}
+  .me .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:5px;vertical-align:middle}
+  .me.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:blink 2s ease-in-out infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
+  .search{padding:10px 14px;display:flex;gap:8px;align-items:center}
+  .search input{flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:20px;color:var(--text);padding:10px 14px;font-size:13px;outline:none;transition:.2s}
+  .search input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.12)}
+  .newbtn{flex:none;width:38px;height:38px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--acc),var(--accDeep));color:#fff;font-size:16px;cursor:pointer;box-shadow:0 4px 16px var(--glow);transition:.15s}
+  .newbtn:hover{filter:brightness(1.1)} .newbtn:active{transform:scale(.9)}
+  .backbtn{display:none;background:none;border:none;color:var(--acc);font-size:30px;line-height:1;cursor:pointer;padding:0 6px 0 0;margin-left:-4px}
+  @media (max-width:720px){ .backbtn{display:block} }
+  .tabs{display:flex;gap:6px;padding:2px 12px 10px}
+  .tab{flex:1;text-align:center;padding:8px;border-radius:10px;font-size:12.5px;color:var(--muted);cursor:pointer;user-select:none;transition:.2s;border:1px solid transparent}
+  .tab:hover{background:var(--hover)}
+  .tab.active{background:linear-gradient(135deg,rgba(255,122,0,.22),rgba(181,62,0,.16));color:#fff;border-color:rgba(255,122,0,.4);box-shadow:0 0 18px rgba(255,122,0,.12)}
+  .chats{flex:1;overflow-y:auto;padding:4px 8px}
+  .chat{display:flex;gap:11px;padding:10px;cursor:pointer;align-items:center;border-radius:12px;margin-bottom:2px;transition:.15s;position:relative}
+  .chat:hover{background:var(--hover)}
+  .chat.sel{background:linear-gradient(135deg,rgba(255,122,0,.18),rgba(181,62,0,.10));box-shadow:inset 0 0 0 1px rgba(255,122,0,.28)}
+  .ava{width:46px;height:46px;border-radius:14px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;font-size:16px;position:relative;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+  .ava::after{content:"";position:absolute;inset:0;border-radius:14px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.12)}
+  .chat .meta{min-width:0;flex:1}
+  .chat .name{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chat .last{font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:3px}
+  .chat.sel .last{color:#f0d3b8}
+  .empty{color:var(--muted);text-align:center;padding:44px 22px;font-size:13px;line-height:1.7}
+  /* ── main ── */
+  #main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .head{height:62px;flex:none;display:flex;align-items:center;gap:12px;padding:0 18px;background:var(--glass);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border-bottom:1px solid var(--line)}
+  .head>div{min-width:0}
+  .head .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .head .sub{font-size:11.5px;color:var(--muted);display:flex;align-items:center;gap:5px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .head .sub .lock{color:var(--ok)}
+  .head .spacer{flex:1}
+  .btn{background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--text);border-radius:10px;padding:9px 13px;font-size:13px;cursor:pointer;display:inline-flex;gap:7px;align-items:center;transition:.18s}
+  .btn:hover{background:var(--hover);border-color:rgba(255,255,255,.14)}
+  .btn.pay{background:linear-gradient(135deg,var(--acc),var(--accDeep));color:#fff;font-weight:600;border-color:transparent;box-shadow:0 6px 20px var(--glow)}
+  .btn.pay:hover{filter:brightness(1.08);box-shadow:0 8px 26px var(--glow)}
+  .btn:disabled{opacity:.5;cursor:default}
+  .msgs{flex:1;overflow-y:auto;padding:20px 9%;display:flex;flex-direction:column;gap:7px}
+  .row{display:flex;animation:pop .28s cubic-bezier(.2,.9,.3,1.2)}
+  .row.out{justify-content:flex-end}
+  @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:none}}
+  .bubble{max-width:68%;padding:9px 13px;border-radius:16px;font-size:14px;line-height:1.45;word-wrap:break-word;position:relative;backdrop-filter:blur(6px)}
+  .row.in .bubble{background:var(--bubbleIn);border:1px solid var(--line);border-bottom-left-radius:5px}
+  .row.out .bubble{background:linear-gradient(135deg,var(--acc),var(--accDeep));color:#fff;border-bottom-right-radius:5px;box-shadow:0 4px 18px rgba(255,122,0,.28)}
+  .bubble.pay{background:linear-gradient(135deg,rgba(255,180,60,.16),rgba(181,62,0,.14));border:1px solid var(--pay);color:var(--text)}
+  .bubble .t{font-size:10px;opacity:.6;margin-top:4px;text-align:right;display:flex;gap:4px;justify-content:flex-end;align-items:center}
+  .paychip{display:flex;align-items:center;gap:9px;font-weight:700;color:var(--pay)}
+  .paychip .amt{font-size:17px}
+  .composer{flex:none;display:flex;gap:10px;padding:14px 18px;background:var(--glass);backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);border-top:1px solid var(--line);align-items:flex-end}
+  .composer textarea{flex:1;resize:none;max-height:130px;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:18px;color:var(--text);padding:11px 15px;font-size:14px;outline:none;font-family:inherit;transition:.2s}
+  .composer textarea:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.1)}
+  .send{width:46px;height:46px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--acc),var(--accDeep));color:#fff;cursor:pointer;flex:none;font-size:18px;box-shadow:0 6px 20px var(--glow);transition:.15s;position:relative;overflow:hidden}
+  .send:hover{filter:brightness(1.1)}
+  .send:active{transform:scale(.9)}
+  .send:disabled{opacity:.5;cursor:default}
+  .send.sealing{pointer-events:none}
+  .send.sealing::after{content:"";position:absolute;inset:0;border-radius:50%;border:2px solid rgba(255,255,255,.5);border-top-color:transparent;animation:spin .7s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .icobtn{width:42px;height:42px;border-radius:50%;border:none;background:rgba(255,255,255,.05);color:var(--muted);font-size:18px;cursor:pointer;flex:none;transition:.15s;display:flex;align-items:center;justify-content:center}
+  .icobtn:hover{background:rgba(255,122,0,.14);color:var(--acc)}
+  .icobtn:active{transform:scale(.9)}
+  .bubble img,.bubble video{max-width:min(340px,100%);max-height:340px;border-radius:12px;display:block;margin:2px 0;background:#000}
+  .bubble .cap{margin-top:5px}
+  .row .sticker{font-size:82px;line-height:1;filter:drop-shadow(0 6px 16px rgba(0,0,0,.45))}
+  .row.sticky .bubble{background:none!important;border:none!important;box-shadow:none!important;padding:2px 0;backdrop-filter:none}
+  .stickers-panel{position:absolute;bottom:82px;right:16px;background:var(--glass2);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px);border:1px solid rgba(255,122,0,.28);border-radius:16px;padding:12px;display:none;grid-template-columns:repeat(6,1fr);gap:4px;box-shadow:0 22px 60px rgba(0,0,0,.55);z-index:40;max-width:340px}
+  .stickers-panel.on{display:grid;animation:rise .2s cubic-bezier(.2,.9,.3,1.1)}
+  .stickers-panel .s{font-size:30px;cursor:pointer;text-align:center;padding:6px;border-radius:10px;transition:.12s;user-select:none}
+  .stickers-panel .s:hover{background:rgba(255,122,0,.16);transform:scale(1.18)}
+  /* welcome */
+  .welcome{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);gap:16px;text-align:center;padding:20px}
+  .welcome .big{width:118px;height:118px;display:flex;align-items:center;justify-content:center;animation:float 5s ease-in-out infinite}
+  .welcome .big svg{width:100%;height:100%;filter:drop-shadow(0 0 26px var(--glow))}
+  @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+  .welcome h1{color:#fff;margin:8px 0 0;font-size:34px;letter-spacing:.5px;background:linear-gradient(120deg,#fff,var(--acc2) 60%,var(--acc));-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .welcome .tag{max-width:440px;font-size:14px;line-height:1.7}
+  .feat{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;justify-content:center;max-width:560px}
+  .feat .chip{font-size:12px;padding:8px 13px;border-radius:20px;background:rgba(255,255,255,.04);border:1px solid var(--line);display:flex;gap:7px;align-items:center;transition:.2s}
+  .feat .chip:hover{border-color:rgba(255,122,0,.4);background:rgba(255,122,0,.08);transform:translateY(-2px)}
+  /* modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.62);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:50}
+  .modal-bg.on{display:flex;animation:fade .2s}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  .modal{background:var(--glass2);backdrop-filter:blur(30px) saturate(150%);-webkit-backdrop-filter:blur(30px);border:1px solid rgba(255,122,0,.22);border-radius:18px;padding:22px;width:440px;max-width:92vw;box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);animation:rise .28s cubic-bezier(.2,.9,.3,1.1)}
+  @keyframes rise{from{opacity:0;transform:translateY(16px) scale(.97)}to{opacity:1;transform:none}}
+  .modal h3{margin:0 0 4px;font-size:18px}
+  .modal p{color:var(--muted);font-size:12.5px;margin:0 0 8px;line-height:1.6}
+  .modal label{font-size:11.5px;color:var(--muted);display:block;margin:12px 0 5px;text-transform:uppercase;letter-spacing:.6px}
+  .modal input{width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:11px 13px;font-size:14px;outline:none;transition:.2s}
+  .modal input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.12)}
+  .modal .actions{display:flex;gap:9px;justify-content:flex-end;margin-top:18px}
+  .modal .err{color:#ff6b6b;font-size:12px;min-height:16px;margin-top:8px}
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--glass2);backdrop-filter:blur(20px);color:var(--text);padding:11px 18px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5);font-size:13px;opacity:0;transition:.25s;z-index:60;border:1px solid rgba(255,122,0,.3)}
+  .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+  ::-webkit-scrollbar{width:8px}
+  ::-webkit-scrollbar-thumb{background:rgba(255,122,0,.25);border-radius:8px}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(255,122,0,.4)}
+  @media (max-width:720px){ #side{width:100%;position:absolute;inset:0;z-index:5} #side.hide{display:none} .msgs{padding:16px 5%} }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+<!-- The Letter mark — a sealed envelope with a post-quantum wax seal. One definition, reused at every size + the favicon. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+  <linearGradient id="lgStroke" x1="10" y1="12" x2="38" y2="36" gradientUnits="userSpaceOnUse"><stop stop-color="#ffc178"/><stop offset=".5" stop-color="#ff9024"/><stop offset="1" stop-color="#ff6a00"/></linearGradient>
+  <linearGradient id="lgSeal" x1="20" y1="22" x2="28" y2="30" gradientUnits="userSpaceOnUse"><stop stop-color="#ffd39c"/><stop offset="1" stop-color="#ff7a00"/></linearGradient>
+  <!-- transparent-background glowing mark: an orange sealed envelope, no filled tile — glows against the dark UI -->
+  <symbol id="letterMark" viewBox="0 0 48 48">
+    <rect x="11" y="15" width="26" height="19" rx="3.6" fill="none" stroke="url(#lgStroke)" stroke-width="2.9"/>
+    <path d="M12.4 17.4 L24 26.2 L35.6 17.4" fill="none" stroke="url(#lgStroke)" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="24" cy="26.2" r="4.6" fill="url(#lgSeal)"/>
+    <circle cx="24" cy="26.2" r="1.9" fill="#0a0a0c" fill-opacity=".55"/>
+  </symbol>
+</defs></svg>
+<div class="aurora a1"></div><div class="aurora a2"></div><div class="aurora a3"></div>
+<div id="app">
+  <aside id="side">
+    <div class="side-top">
+      <div class="brand"><span class="mark"><svg><use href="#letterMark"/></svg></span><span class="bt">Letter</span></div>
+      <div class="me" id="me"><span class="dot"></span>connecting…</div>
+    </div>
+    <div class="search"><input id="q" placeholder="Search, @username, or paste address"><button class="newbtn" id="newBtn" title="New chat">✚</button></div>
+    <div class="tabs">
+      <div class="tab active" data-tab="chats">Chats</div>
+      <div class="tab" data-tab="groups">Groups</div>
+    </div>
+    <div class="chats" id="list"></div>
+  </aside>
+  <main id="main">
+    <div class="welcome" id="welcome">
+      <div class="big"><svg><use href="#letterMark"/></svg></div>
+      <h1>Letter</h1>
+      <div class="tag">Messaging that <b>bypasses</b> Telegram. Post-quantum sealed end to end, zero metadata, and money that moves inside the conversation. No email. No phone. No IP.</div>
+      <div class="feat">
+        <div class="chip">🔐 ML-KEM-768 + ML-DSA-65</div>
+        <div class="chip">🫥 Metadata-blind relay</div>
+        <div class="chip">💸 Send USDm in chat</div>
+        <div class="chip">🧅 Onion-only, no servers</div>
+      </div>
+      <button class="btn pay" id="startBtn" style="margin-top:8px;padding:12px 22px">✚&nbsp; Start a new chat</button>
+    </div>
+    <div id="conv" style="display:none;flex:1;flex-direction:column;min-height:0;position:relative">
+      <div class="head">
+        <button class="backbtn" id="backBtn" title="Back">‹</button>
+        <div class="ava" id="cAva" style="width:42px;height:42px;border-radius:12px;font-size:15px"></div>
+        <div><div class="name" id="cName"></div><div class="sub" id="cSub"></div></div>
+        <div class="spacer"></div>
+        <button class="btn" id="addBtn" style="display:none">＋&nbsp; Add</button>
+        <button class="btn pay" id="payBtn">💸&nbsp; Send USDm</button>
+      </div>
+      <div class="msgs" id="msgs"></div>
+      <div class="stickers-panel" id="stickers"></div>
+      <div class="composer">
+        <button class="icobtn" id="attachBtn" title="Send a photo, video or GIF">📎</button>
+        <button class="icobtn" id="stickerBtn" title="Stickers">🙂</button>
+        <input type="file" id="fileInput" accept="image/*,video/*" multiple style="display:none">
+        <textarea id="input" rows="1" placeholder="Write a letter…  (it's sealed before it leaves your device)"></textarea>
+        <button class="send" id="sendBtn" title="Send">➤</button>
+      </div>
+    </div>
+  </main>
+</div>
+
+<div class="modal-bg" id="startModal">
+  <div class="modal">
+    <h3>New chat</h3>
+    <p>Enter a <b>@username</b> or paste a MonerousD <b>address</b>. Your correspondent's identity is their wallet — no phone number, no email, nothing to leak.</p>
+    <label>Recipient</label>
+    <input id="startInput" placeholder="@alice  or  cZkxw…" autocomplete="off" spellcheck="false">
+    <div class="err" id="startErr"></div>
+    <div class="actions"><button class="btn" id="startCancel">Cancel</button><button class="btn pay" id="startGo">Start chat</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="groupModal">
+  <div class="modal">
+    <h3>New group</h3>
+    <p>A <b>private</b> group, sealed to each member individually — the relay only ever sees opaque letters, never who is in the group or how many. Invite by <b>@username</b> or address; they join the moment they receive it.</p>
+    <label>Group name</label>
+    <input id="grpName" placeholder="e.g. Rust Devs" autocomplete="off">
+    <label>Invite members (one per line)</label>
+    <textarea id="grpMembers" rows="3" placeholder="@alice&#10;cZkxw…" style="width:100%;background:rgba(255,255,255,.05);border:1px solid var(--line);border-radius:10px;color:var(--text);padding:11px 13px;font-size:14px;outline:none;font-family:inherit;resize:none"></textarea>
+    <label>Discoverable @handle (optional)</label>
+    <input id="grpHandle" placeholder="@rustdevs — registers on-chain so people can find &amp; join" autocomplete="off" spellcheck="false">
+    <div class="err" id="grpErr"></div>
+    <div class="actions"><button class="btn" id="grpCancel">Cancel</button><button class="btn pay" id="grpGo">Create group</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="payModal">
+  <div class="modal">
+    <h3>Send USDm</h3>
+    <p>A real, private on-chain payment to this contact. It clears your wallet's own approval, then a sealed receipt appears in the chat.</p>
+    <label>Amount (USDm)</label>
+    <input id="payAmt" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal">
+    <label>Note (optional)</label>
+    <input id="payNote" placeholder="What's it for?">
+    <div class="err" id="payErr"></div>
+    <div class="actions"><button class="btn" id="payCancel">Cancel</button><button class="btn pay" id="payGo">Send payment</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+// ── animated PQ-lattice background: orange nodes drifting on black, linking when near (evokes the lattice
+//    cryptography + the private mesh). Pure canvas, transform-free, paused when hidden — light on the CPU. ──
+(function lattice(){
+  const c=document.getElementById('bg'), x=c.getContext('2d'); let w,h,pts,raf;
+  function size(){ w=c.width=innerWidth*devicePixelRatio; h=c.height=innerHeight*devicePixelRatio; c.style.width=innerWidth+'px'; c.style.height=innerHeight+'px'; make(); }
+  function make(){ const n=Math.min(90,Math.floor(w*h/26000/devicePixelRatio)); pts=[]; for(let i=0;i<n;i++) pts.push({x:Math.random()*w,y:Math.random()*h,vx:(Math.random()-.5)*.22*devicePixelRatio,vy:(Math.random()-.5)*.22*devicePixelRatio}); }
+  function step(){
+    x.clearRect(0,0,w,h);
+    for(const p of pts){ p.x+=p.vx; p.y+=p.vy; if(p.x<0||p.x>w)p.vx*=-1; if(p.y<0||p.y>h)p.vy*=-1; }
+    const R=150*devicePixelRatio;
+    for(let i=0;i<pts.length;i++){
+      for(let j=i+1;j<pts.length;j++){
+        const a=pts[i],b=pts[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.hypot(dx,dy);
+        if(d<R){ const o=(1-d/R)*.16; x.strokeStyle='rgba(255,122,0,'+o+')'; x.lineWidth=devicePixelRatio; x.beginPath(); x.moveTo(a.x,a.y); x.lineTo(b.x,b.y); x.stroke(); }
+      }
+    }
+    for(const p of pts){ x.fillStyle='rgba(255,150,60,.55)'; x.beginPath(); x.arc(p.x,p.y,1.5*devicePixelRatio,0,7); x.fill(); }
+    raf=requestAnimationFrame(step);
+  }
+  addEventListener('resize',size); size(); step();
+  document.addEventListener('visibilitychange',()=>{ if(document.hidden){cancelAnimationFrame(raf);} else {step();} });
+})();
+
+// ── PROVIDER BRIDGE — the backend IS the chain; this page holds no keys, only UI. ──
+const _pending=new Map(); let _rid=1;
+function rpc(method,params){ return new Promise((res,rej)=>{ const id=_rid++; _pending.set(id,{res,rej}); (window.parent||window).postMessage({type:'monerousd:rpc',id,method,params:params||{}},'*'); setTimeout(()=>{ if(_pending.has(id)){_pending.delete(id);rej(new Error('wallet did not answer '+method));} },20000); }); }
+window.addEventListener('message',(ev)=>{ const d=ev.data; if(!d) return; if(d.type==='monerousd:res'&&_pending.has(d.id)){ const {res,rej}=_pending.get(d.id); _pending.delete(d.id); d.ok?res(d.result):rej(new Error(d.error||'rpc error')); } });
+
+const S={me:null,chats:{},sel:null,tab:'chats'};
+const $=s=>document.querySelector(s);
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2400); }
+function short(a){ return a?(a.slice(0,10)+'…'+a.slice(-6)):''; }
+function avaColor(a){ let h=0; for(const c of (a||'')) h=(h*31+c.charCodeAt(0))>>>0; const g=[[255,122,0],[181,62,0],[255,171,77],[210,90,20],[150,50,10]][h%5]; return `linear-gradient(135deg,rgb(${g[0]},${g[1]},${g[2]}),#2a1405)`; }
+function initial(a){ return (a||'?').replace(/^@/,'').slice(0,2).toUpperCase(); }
+function displayName(a){ const c=S.chats[a]; return (c&&c.name)||('@'+short(a)); }
+function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function hash(s){ let h=0; for(const c of (s||'')) h=(h*131+c.charCodeAt(0))>>>0; return h.toString(36); }
+
+function ensureChat(a,n){ if(!S.chats[a]) S.chats[a]={addr:a,name:n||null,msgs:[],last:0}; if(n) S.chats[a].name=n; return S.chats[a]; }
+function addMsg(a,m){ const c=ensureChat(a); if(c.msgs.some(x=>x.id===m.id)) return false; c.msgs.push(m); c.msgs.sort((p,q)=>p.t-q.t); c.last=Math.max(c.last,m.t); return true; }
+
+// Resolve a @username (via the node) or a raw address to a Letter address. Returns null if unresolvable.
+async function resolveTo(v){ v=(v||'').trim(); if(!v) return null;
+  if(v.startsWith('@')){ const nm=v.slice(1);
+    // Prefer the ON-CHAIN directory (one indexed read, reconstructed from the mesh); fall back to the legacy
+    // handle path during the migration so no one becomes unreachable mid-cutover.
+    for(const path of ['/dir/resolve','/resolve_username']){
+      try{ const r=await rpc('nodeRpc',{path,body:JSON.stringify({name:nm})}); const a=(r&&(r.address||r.result))||null; if(a) return a; }catch(e){}
+    }
+    return null;
+  }
+  if(v.startsWith('cZkxw')||v.length>=40) return v;
+  return null;
+}
+
+// ── GROUPS — PRIVATE by construction, orchestrated CLIENT-SIDE on the SAME authenticated letter primitive.
+//    A group message is sealed PER MEMBER (N separate letters), so the metadata-blind relay and any observer
+//    see only opaque DMs — more private than a shared group key (no cleartext routing tag, no which-group leak).
+//    The roster lives in members' own wallets; only the group OWNER (the seal's authenticated sender) can change
+//    it, and every message is self-describing so a newly-added member auto-joins. No node/consensus change, and
+//    nothing grows in node state — the group state is the user's own, bounded by the groups they are in. ──
+function isGroup(k){ return typeof k==='string' && k.startsWith('grp:'); }
+function newGid(){ let s=''; for(let i=0;i<16;i++) s+=Math.floor(Math.random()*256).toString(16).padStart(2,'0'); return s; }
+function grpEnvelope(g,kind,text){ return 'GRP1:'+JSON.stringify({g:g.gid,n:S.chats['grp:'+g.gid].name,o:g.owner,m:g.members,s:g.seq,k:kind,b:text||'',h:g.handle||''}); }
+function parseGrp(msg){ if(typeof msg!=='string'||!msg.startsWith('GRP1:')) return null; try{ return JSON.parse(msg.slice(5)); }catch(e){ return null; } }
+// Create/update a group's local record. Roster + name changes are authoritative ONLY from the OWNER — and the
+// wallet already authenticated `fromAddr` when it opened the sealed letter, so a forged owner cannot rewrite it.
+function ensureGroup(gid,meta,fromAddr){ const key='grp:'+gid; let c=S.chats[key];
+  if(!c){ c=S.chats[key]={addr:key,name:(meta&&meta.n)||'Group',group:{gid,owner:(meta&&meta.o)||fromAddr||'',members:(meta&&meta.m)||[],seq:0,handle:(meta&&meta.h)||''},msgs:[],last:0}; }
+  const g=c.group;
+  if(meta && meta.o && fromAddr && fromAddr===meta.o && (meta.s||0)>=g.seq){
+    if(meta.n) c.name=meta.n; g.owner=meta.o; if(Array.isArray(meta.m)) g.members=meta.m; g.seq=meta.s||g.seq; if(meta.h!==undefined) g.handle=meta.h;
+  }
+  return c;
+}
+async function createGroup(name,memberInputs,handle){
+  if(!S.me){ toast('Open in the wallet first'); return; }
+  const gid=newGid(), key='grp:'+gid, members=[S.me];
+  for(const v of (memberInputs||[])){ const a=await resolveTo(v); if(a&&!members.includes(a)) members.push(a); }
+  const h=(handle||'').replace(/^@/,'').trim();
+  S.chats[key]={addr:key,name:name||'Group',group:{gid,owner:S.me,members,seq:1,handle:h},msgs:[],last:Date.now()};
+  const env=grpEnvelope(S.chats[key].group,'roster',''); // announce the roster so invited members auto-join
+  for(const mem of members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){} }
+  // If a discoverable @handle was chosen, register it ON-CHAIN (wallet-signed) so anyone can find + join the group.
+  if(h){ try{ await rpc('dirRegister',{kindGroup:true,key:h,display:name||'Group',topic:''}); toast('Group live · discoverable as @'+h+' 🔒'); }
+         catch(e){ toast('Group created; @handle sign-up failed: '+(e.message||e)); } }
+  closeModal('groupModal'); selectChat(key);
+  if(!h) toast('Group created 🔒');
+}
+async function sendGroup(gid,text){ const c=S.chats['grp:'+gid]; if(!c) return; const g=c.group;
+  addMsg('grp:'+gid,{id:'gout:'+Date.now(),out:true,from:S.me,body:text,pay:null,t:Date.now()}); renderList(); renderMsgs();
+  const env=grpEnvelope(g,'msg',text);
+  for(const mem of g.members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){ toast('A member is unreachable'); } }
+}
+async function addGroupMember(gid,v){ const c=S.chats['grp:'+gid]; if(!c) return; const g=c.group;
+  if(g.owner!==S.me){ toast('Only the group owner can add members'); return; }
+  const a=await resolveTo(v); if(!a){ toast('Could not resolve '+v); return; }
+  if(g.members.includes(a)){ toast('Already a member'); return; }
+  g.members.push(a); g.seq++;
+  const env=grpEnvelope(g,'roster','');
+  for(const mem of g.members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){} }
+  renderMsgs(); toast('Member added 🔒');
+}
+// Find a discoverable group by its ON-CHAIN @handle and ask to join: resolve the handle to the owner's address
+// (one indexed read on-chain), then seal a join request to the owner. The owner's client auto-admits + broadcasts
+// the new roster (a discoverable group is join-to-read), so the joiner auto-joins the moment the roster arrives.
+async function joinByHandle(handle){ const h=(handle||'').replace(/^@/,'').trim(); if(!h){ return; }
+  let owner=null; try{ const r=await rpc('nodeRpc',{path:'/group/resolve',body:JSON.stringify({handle:h})}); owner=r&&r.owner_addr; }catch(e){}
+  if(!owner){ toast('No group found for @'+h); return; }
+  try{ await rpc('letterSend',{to:owner,msg:'GRP1:'+JSON.stringify({k:'join',h})}); toast('Join request sent to @'+h+' 🔒'); }
+  catch(e){ toast('Could not send join request'); }
+}
+
+// ── MEDIA — photos, videos, GIFs, stickers. Each rides the SAME sealed-letter transport (per-member for groups),
+//    so media is as private as text and carries no local store: the compose UI just calls the letter bridge, which
+//    points at the DA content stream once on-chain inboxes land. Large files chunk in the on-chain phase. ──
+const STICKERS=['🔒','🛡️','🦀','💸','🌐','👻','🔥','⚡','🚀','😎','😂','❤️','👍','🎉','🙏','😅','🤝','👀','💯','✅','🌙','🕵️','📮','✉️','🥳','🤑','🧠','🫡','😤','🤫'];
+function buildStickers(){ const p=$('#stickers'); if(p.childElementCount) return; for(const e of STICKERS){ const d=document.createElement('div'); d.className='s'; d.textContent=e; d.onclick=()=>{ $('#stickers').classList.remove('on'); sendMedia({t:'sticker',e}); }; p.appendChild(d); } }
+function fileToMedia(file){ return new Promise((res,rej)=>{ const r=new FileReader();
+  r.onload=()=>{ const mime=file.type||''; const t=mime.startsWith('video')?'vid':(mime==='image/gif'?'gif':'img'); res({t,mime,name:file.name,d:r.result}); };
+  r.onerror=rej; r.readAsDataURL(file); }); }
+async function doAttach(files){ for(const f of files){
+  if(f.size>5*1024*1024){ toast(f.name+' is over 5MB — full video streaming lands with on-chain chunking'); continue; }
+  try{ const md=await fileToMedia(f); await sendMedia(md); }catch(e){ toast('Could not attach '+f.name); } } }
+async function sendMedia(media){ if(!S.sel){ toast('Open a chat first'); return; }
+  const local={id:'m'+Date.now()+':'+Math.floor(Math.random()*99999),out:true,from:S.me,body:'',media,pay:null,t:Date.now()};
+  addMsg(S.sel,local); renderList(); renderMsgs();
+  try{
+    if(isGroup(S.sel)){ const g=S.chats[S.sel].group;
+      const env='GRP1:'+JSON.stringify({g:g.gid,n:S.chats[S.sel].name,o:g.owner,m:g.members,s:g.seq,k:'media',md:media});
+      for(const mem of g.members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){} }
+    } else { await rpc('letterSend',{to:S.sel,msg:'MEDIA1:'+JSON.stringify(media)}); }
+  }catch(e){ toast('Send failed: '+e.message); }
+}
+function mediaHtml(md){ if(!md) return '';
+  if(md.t==='sticker') return `<div class="sticker">${escapeHtml(md.e||'❓')}</div>`;
+  if(md.t==='vid') return `<video src="${md.d}" controls playsinline preload="metadata"></video>`;
+  return `<img src="${md.d}" alt="${escapeHtml(md.name||'image')}" loading="lazy">`; }
+
+function renderList(){
+  const q=($('#q').value||'').toLowerCase().trim(), list=$('#list');
+  const want=S.tab==='groups';
+  const arr=Object.values(S.chats)
+    .filter(c=>isGroup(c.addr)===want)
+    .sort((a,b)=>b.last-a.last)
+    .filter(c=>!q||displayName(c.addr).toLowerCase().includes(q)||c.addr.toLowerCase().includes(q));
+  list.innerHTML='';
+  if(want){
+    const nb=document.createElement('div'); nb.className='chat'; nb.style.cssText='justify-content:flex-start;color:var(--acc);font-weight:600';
+    nb.innerHTML=`<div class="ava" style="background:linear-gradient(135deg,var(--acc),var(--accDeep))">＋</div><div class="meta"><div class="name">New group</div><div class="last" style="color:var(--muted)">Private · post-quantum sealed</div></div>`;
+    nb.onclick=()=>openGroupModal(); list.appendChild(nb);
+    if(q.startsWith('@')&&q.length>1){
+      const fb=document.createElement('div'); fb.className='chat'; fb.style.cssText='justify-content:flex-start;color:var(--acc);font-weight:600';
+      fb.innerHTML=`<div class="ava" style="background:linear-gradient(135deg,var(--acc),var(--accDeep))">🔍</div><div class="meta"><div class="name">Find ${escapeHtml(q)}</div><div class="last" style="color:var(--muted)">Discover &amp; join this group on-chain</div></div>`;
+      fb.onclick=()=>joinByHandle(q); list.appendChild(fb);
+    }
+  }
+  if(!arr.length){
+    const e=document.createElement('div'); e.className='empty';
+    e.innerHTML=want?'No groups yet.<br>Tap <b>New group</b> to start one — invite by @username or address.<br><br><span style="color:var(--dim)">Or type a <b>@handle</b> above to find &amp; join a public group on-chain.</span>'
+                    :'No chats yet.<br>Tap <b>✚</b> to start one with a @username or address.';
+    list.appendChild(e); return;
+  }
+  for(const c of arr){ const last=c.msgs[c.msgs.length-1]; const el=document.createElement('div'); el.className='chat'+(S.sel===c.addr?' sel':'');
+    const grp=isGroup(c.addr);
+    let body;
+    if(!last) body=grp?'Group ready':'New chat';
+    else if(last.pay) body='💸 '+last.pay+' USDm';
+    else if(last.media) body={sticker:(last.media.e||'')+' Sticker',vid:'🎬 Video',gif:'🎞️ GIF',img:'📷 Photo'}[last.media.t]||'📎 Attachment';
+    else body=escapeHtml(last.body||'');
+    const lastTxt=(last&&grp&&last.from&&!last.out?escapeHtml(short(last.from))+': ':'')+body;
+    const av=grp?`<div class="ava" style="background:${avaColor(c.addr)}">👥</div>`:`<div class="ava" style="background:${avaColor(c.addr)}">${initial(displayName(c.addr))}</div>`;
+    el.innerHTML=`${av}<div class="meta"><div class="name">${escapeHtml(displayName(c.addr))}</div><div class="last">${lastTxt}</div></div>`;
+    el.onclick=()=>selectChat(c.addr); list.appendChild(el); }
+}
+function selectChat(a){ S.sel=a; if(!isGroup(a)) ensureChat(a); $('#welcome').style.display='none'; $('#conv').style.display='flex';
+  const grp=isGroup(a)?S.chats[a].group:null;
+  $('#cAva').style.background=avaColor(a); $('#cAva').textContent=grp?'👥':initial(displayName(a));
+  $('#cName').textContent=displayName(a);
+  if(grp){ const owner=grp.owner===S.me; $('#cSub').innerHTML='<span class="lock">🔒</span> '+grp.members.length+' member'+(grp.members.length===1?'':'s')+' · sealed per-member';
+    $('#payBtn').style.display='none'; $('#addBtn').style.display=owner?'inline-flex':'none'; }
+  else { $('#cSub').innerHTML='<span class="lock">🔒</span> '+short(a)+' · post-quantum sealed'; $('#payBtn').style.display='inline-flex'; $('#addBtn').style.display='none'; }
+  $('#side').classList.add('hide'); renderList(); renderMsgs(); $('#input').focus(); }
+function renderMsgs(){ const c=S.chats[S.sel], box=$('#msgs'); if(!c){box.innerHTML='';return;} box.innerHTML='';
+  const grp=isGroup(S.sel);
+  for(const m of c.msgs){ const row=document.createElement('div'); row.className='row '+(m.out?'out':'in');
+    const time=new Date(m.t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    const who=(grp&&!m.out&&m.from)?`<div style="font-size:11px;font-weight:700;color:var(--acc2);margin-bottom:2px">${escapeHtml(short(m.from))}</div>`:'';
+    if(m.media&&m.media.t==='sticker'){ row.className+=' sticky'; row.innerHTML=`<div class="bubble">${who}<div class="sticker">${escapeHtml(m.media.e||'❓')}</div><div class="t">${time}${m.out?' 🔒':''}</div></div>`; }
+    else if(m.media){ const cap=m.body?`<div class="cap">${escapeHtml(m.body)}</div>`:''; row.innerHTML=`<div class="bubble">${who}${mediaHtml(m.media)}${cap}<div class="t">${time}${m.out?' 🔒':''}</div></div>`; }
+    else if(m.pay) row.innerHTML=`<div class="bubble pay">${who}<div class="paychip">💸 <span class="amt">${m.pay} USDm</span></div>${m.body?`<div style="margin-top:4px">${escapeHtml(m.body)}</div>`:''}<div class="t">${time}${m.out?' 🔒':''}</div></div>`;
+    else row.innerHTML=`<div class="bubble">${who}${escapeHtml(m.body)}<div class="t">${time}${m.out?' 🔒':''}</div></div>`;
+    box.appendChild(row); }
+  box.scrollTop=box.scrollHeight; }
+
+async function boot(){
+  try{ const r=await rpc('letterAddress'); S.me=r&&r.address; $('#me').innerHTML='<span class="dot"></span>You · '+short(S.me); $('#me').classList.add('on'); }
+  catch(e){ $('#me').innerHTML='<span class="dot"></span>Open in the wallet'; }
+  restoreHistory(); // fire-and-forget: the seed-restore walk fills chats as pages land
+  await refresh(); setInterval(refresh,5000);
+}
+// ⭐ CHAT HISTORY FROM THE CHAIN — your wallet IS your login: page the on-chain letter columns from the
+// start, open only what is sealed to you (the wallet authenticates every sender), and rebuild the full
+// conversation list exactly like Telegram — on a fresh device, from the 24 words, with NO local storage.
+async function restoreHistory(){ if(!S.me) return;
+  let top=0; try{ const i=await rpc('nodeRpc',{path:'/get_info',body:''}); top=(i&&(i.served_seq||i.height))||0; }catch(e){}
+  let from=0, got=0;
+  while(true){
+    let r=null; try{ r=await rpc('letterHistory',{from}); }catch(e){ break; }
+    const msgs=(r&&r.messages)||[], page=(r&&r.page)||64;
+    let changed=false;
+    for(const m of msgs){
+      const gp=parseGrp(m.msg);
+      if(gp&&gp.g){ ensureGroup(gp.g,gp,m.from);
+        if(gp.k==='msg'){ if(addMsg('grp:'+gp.g,{id:'h:'+m.ord+':'+hash(m.msg),out:false,from:m.from,body:gp.b,pay:null,t:Date.now()-1})) changed=true; }
+        else if(gp.k==='media'&&gp.md){ if(addMsg('grp:'+gp.g,{id:'hm:'+m.ord+':'+hash(m.msg),out:false,from:m.from,body:'',media:gp.md,pay:null,t:Date.now()-1})) changed=true; }
+        continue;
+      }
+      const md=/^MEDIA1:(.*)$/s.exec(m.msg||'');
+      if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
+        if(mo&&addMsg(m.from,{id:'hM:'+m.ord+':'+hash(m.msg),out:false,body:'',media:mo,pay:null,t:Date.now()-1})) changed=true; continue; }
+      let body=m.msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(m.msg||''); if(pm){pay=pm[1];body=pm[2];}
+      if(addMsg(m.from,{id:'h:'+m.ord+':'+hash(m.msg),out:false,body,pay,t:Date.now()-1})) changed=true;
+    }
+    got+=msgs.length;
+    if(changed) renderList();
+    from+=page;
+    if(from>top&&msgs.length===0) break;      // past the chain top and this page was empty — done
+    if(from>top+page*4) break;                // safety stop just past the top
+  }
+  if(got>0){ renderList(); if(S.sel) renderMsgs(); toast('History restored from chain · '+got+' letter'+(got===1?'':'s')+' 🔒'); }
+}
+async function refresh(){
+  try{ const r=await rpc('letterInbox'); const msgs=(r&&r.messages)||[]; let changed=false;
+    for(let i=0;i<msgs.length;i++){ const m=msgs[i],from=m.from;
+      const gp=parseGrp(m.msg);
+      if(gp&&gp.k==='join'&&gp.h){ // someone found my group by its @handle and wants in — auto-admit (join-to-read)
+        const mine=Object.values(S.chats).find(c=>c.group&&c.group.owner===S.me&&c.group.handle===gp.h);
+        if(mine){ addGroupMember(mine.group.gid, from); changed=true; }
+        continue;
+      }
+      if(gp&&gp.g){ // a group letter — authenticated sender is `from`; owner-only roster adoption inside ensureGroup
+        ensureGroup(gp.g,gp,from);
+        if(gp.k==='msg'){ if(addMsg('grp:'+gp.g,{id:'gin:'+gp.g+':'+from+':'+hash(m.msg)+':'+i,out:false,from,body:gp.b,pay:null,t:Date.now()})) changed=true; }
+        else if(gp.k==='media'&&gp.md){ if(addMsg('grp:'+gp.g,{id:'gmd:'+gp.g+':'+from+':'+hash(m.msg)+':'+i,out:false,from,body:'',media:gp.md,pay:null,t:Date.now()})) changed=true; }
+        else { changed=true; } // roster/control — the group now exists/updated in the list
+        continue;
+      }
+      const md=/^MEDIA1:(.*)$/s.exec(m.msg||'');
+      if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
+        if(mo&&addMsg(from,{id:'imd:'+from+':'+hash(m.msg)+':'+i,out:false,body:'',media:mo,pay:null,t:Date.now()})) changed=true; continue; }
+      let body=m.msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(m.msg||''); if(pm){pay=pm[1];body=pm[2];}
+      if(addMsg(from,{id:'in:'+from+':'+hash(m.msg)+':'+i,out:false,body,pay,t:Date.now()})) changed=true; }
+    if(changed){ renderList(); if(S.sel) renderMsgs(); }
+  }catch(e){}
+}
+async function doSend(){ const t=$('#input'), body=(t.value||'').trim(); if(!body||!S.sel) return; t.value=''; autoGrow(t);
+  const b=$('#sendBtn'); b.classList.add('sealing');
+  try{
+    if(isGroup(S.sel)){ await sendGroup(S.chats[S.sel].group.gid,body); }
+    else { addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
+      await rpc('letterSend',{to:S.sel,msg:body}); }
+  }catch(e){ toast('Send failed: '+e.message); } finally{ b.classList.remove('sealing'); }
+}
+async function doPay(){ const amt=parseFloat($('#payAmt').value), note=($('#payNote').value||'').trim(), err=$('#payErr'); err.textContent='';
+  if(!(amt>0)){ err.textContent='Enter an amount'; return; } $('#payGo').disabled=true;
+  try{ await rpc('transfer',{to:S.sel,amount:amt}); await rpc('letterSend',{to:S.sel,msg:'PAY:'+amt+note});
+    addMsg(S.sel,{id:'pay:'+Date.now(),out:true,body:note,pay:String(amt),t:Date.now()}); closeModal('payModal'); renderList(); renderMsgs(); toast('Sent '+amt+' USDm 🔒');
+  }catch(e){ err.textContent=e.message; } finally{ $('#payGo').disabled=false; }
+}
+async function startChat(){ const v=($('#startInput').value||'').trim(), err=$('#startErr'); err.textContent=''; if(!v){ err.textContent='Enter a @username or address'; return; }
+  const name=v.startsWith('@')?v:null;
+  const addr=await resolveTo(v);
+  if(!addr){ err.textContent=name?('No wallet found for '+v):'That is not a valid address or @username'; return; }
+  ensureChat(addr,name); closeModal('startModal'); $('#startInput').value=''; selectChat(addr);
+}
+function openModal(id){ $('#'+id).classList.add('on'); } function closeModal(id){ $('#'+id).classList.remove('on'); }
+function autoGrow(t){ t.style.height='auto'; t.style.height=Math.min(130,t.scrollHeight)+'px'; }
+
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active'); S.tab=t.dataset.tab; renderList(); });
+$('#q').oninput=renderList;
+function openGroupModal(){ $('#grpName').value=''; $('#grpMembers').value=''; $('#grpErr').textContent=''; openModal('groupModal'); setTimeout(()=>$('#grpName').focus(),60); }
+$('#startBtn').onclick=()=>{ openModal('startModal'); setTimeout(()=>$('#startInput').focus(),60); };
+$('#newBtn').onclick=()=>{ if(S.tab==='groups'){ openGroupModal(); } else { openModal('startModal'); setTimeout(()=>$('#startInput').focus(),60); } };
+$('#backBtn').onclick=()=>{ $('#side').classList.remove('hide'); };
+$('#grpCancel').onclick=()=>closeModal('groupModal');
+$('#grpGo').onclick=async()=>{ const name=($('#grpName').value||'').trim(); if(!name){ $('#grpErr').textContent='Name your group'; return; }
+  const mems=($('#grpMembers').value||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  const handle=($('#grpHandle').value||'').trim(); $('#grpGo').disabled=true;
+  try{ await createGroup(name,mems,handle); }catch(e){ $('#grpErr').textContent=e.message||'Could not create group'; } finally{ $('#grpGo').disabled=false; } };
+$('#addBtn').onclick=async()=>{ if(!isGroup(S.sel)) return; const v=prompt('Add member — @username or address'); if(v) await addGroupMember(S.chats[S.sel].group.gid,v); };
+$('#startGo').onclick=startChat; $('#startCancel').onclick=()=>closeModal('startModal');
+$('#startInput').addEventListener('keydown',e=>{ if(e.key==='Enter'){e.preventDefault();startChat();} });
+$('#payBtn').onclick=()=>{ $('#payAmt').value=''; $('#payNote').value=''; $('#payErr').textContent=''; openModal('payModal'); setTimeout(()=>$('#payAmt').focus(),60); };
+$('#payGo').onclick=doPay; $('#payCancel').onclick=()=>closeModal('payModal');
+$('#sendBtn').onclick=doSend;
+$('#attachBtn').onclick=()=>$('#fileInput').click();
+$('#fileInput').addEventListener('change',e=>{ const fs=[...e.target.files]; e.target.value=''; if(fs.length) doAttach(fs); });
+$('#stickerBtn').onclick=()=>{ buildStickers(); $('#stickers').classList.toggle('on'); };
+document.addEventListener('click',e=>{ if(!e.target.closest('#stickers')&&!e.target.closest('#stickerBtn')) $('#stickers').classList.remove('on'); });
+$('#input').addEventListener('input',e=>autoGrow(e.target));
+$('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
+$('#me').onclick=()=>{ if(S.me){ try{navigator.clipboard.writeText(S.me);}catch(e){} toast('Your Letter address copied'); } };
+boot();
+</script>
+</body>
+</html>
