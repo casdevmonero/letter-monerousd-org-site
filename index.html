@@ -288,7 +288,7 @@
 
 // ── PROVIDER BRIDGE — the backend IS the chain; this page holds no keys, only UI. ──
 const _pending=new Map(); let _rid=1;
-function rpc(method,params){ return new Promise((res,rej)=>{ const id=_rid++; _pending.set(id,{res,rej}); (window.parent||window).postMessage({type:'monerousd:rpc',id,method,params:params||{}},'*'); setTimeout(()=>{ if(_pending.has(id)){_pending.delete(id);rej(new Error('wallet did not answer '+method));} },20000); }); }
+function rpc(method,params){ return new Promise((res,rej)=>{ const id=_rid++; _pending.set(id,{res,rej}); (window.parent||window).postMessage({type:'monerousd:rpc',id,method,params:params||{}},'*'); const ms=method==='transfer'?180000:20000; /* a payment legitimately waits on the wallet's own auth gate + prove */ setTimeout(()=>{ if(_pending.has(id)){_pending.delete(id);rej(new Error('wallet did not answer '+method));} },ms); }); }
 window.addEventListener('message',(ev)=>{ const d=ev.data; if(!d) return; if(d.type==='monerousd:res'&&_pending.has(d.id)){ const {res,rej}=_pending.get(d.id); _pending.delete(d.id); d.ok?res(d.result):rej(new Error(d.error||'rpc error')); } });
 
 const S={me:null,chats:{},sel:null,tab:'chats'};
