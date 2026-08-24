@@ -381,9 +381,9 @@ async function doAttach(files){ for(const f of files){
 //    server, no size metadata outside the seal — every chunk is one more opaque letter on the wire. ──
 const CHUNK_BYTES=400*1024;
 function packChunks(payload){ const id=hash(payload)+payload.length.toString(36); const n=Math.ceil(payload.length/CHUNK_BYTES);
-  const out=[]; for(let i=0;i<n;i++) out.push('MCHUNK1:'+JSON.stringify({id,i,n})+' '+payload.slice(i*CHUNK_BYTES,(i+1)*CHUNK_BYTES)); return out; }
+  const out=[]; for(let i=0;i<n;i++) out.push('MCHUNK1:'+JSON.stringify({id,i,n})+' '+payload.slice(i*CHUNK_BYTES,(i+1)*CHUNK_BYTES)); return out; }
 function parseChunk(msg){ if(typeof msg!=='string'||!msg.startsWith('MCHUNK1:')) return null;
-  const z=msg.indexOf(' '); if(z<0) return null;
+  const z=msg.indexOf(' '); if(z<0) return null;
   try{ const h=JSON.parse(msg.slice(8,z)); return {id:h.id,i:h.i,n:h.n,data:msg.slice(z+1)}; }catch(e){ return null; } }
 // Reassembly buffers, keyed by chunk id; a completed set becomes the original payload and is dropped here.
 const CHUNKS={};
