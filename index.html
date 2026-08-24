@@ -374,16 +374,35 @@ function fileToMedia(file){ return new Promise((res,rej)=>{ const r=new FileRead
   r.onload=()=>{ const mime=file.type||''; const t=mime.startsWith('video')?'vid':(mime==='image/gif'?'gif':'img'); res({t,mime,name:file.name,d:r.result}); };
   r.onerror=rej; r.readAsDataURL(file); }); }
 async function doAttach(files){ for(const f of files){
-  if(f.size>5*1024*1024){ toast(f.name+' is over 5MB — full video streaming lands with on-chain chunking'); continue; }
+  if(f.size>20*1024*1024){ toast(f.name+' is over 20MB — trim it down first'); continue; }
   try{ const md=await fileToMedia(f); await sendMedia(md); }catch(e){ toast('Could not attach '+f.name); } } }
+// ── LARGE-MEDIA CHUNKING — a big photo/video splits into self-describing chunk letters (each rides the same
+//    sealed transport), reassembled by the recipient's wallet: id = a content hash, part i of n. No manifest
+//    server, no size metadata outside the seal — every chunk is one more opaque letter on the wire. ──
+const CHUNK_BYTES=400*1024;
+function packChunks(payload){ const id=hash(payload)+payload.length.toString(36); const n=Math.ceil(payload.length/CHUNK_BYTES);
+  const out=[]; for(let i=0;i<n;i++) out.push('MCHUNK1:'+JSON.stringify({id,i,n})+' '+payload.slice(i*CHUNK_BYTES,(i+1)*CHUNK_BYTES)); return out; }
+function parseChunk(msg){ if(typeof msg!=='string'||!msg.startsWith('MCHUNK1:')) return null;
+  const z=msg.indexOf(' '); if(z<0) return null;
+  try{ const h=JSON.parse(msg.slice(8,z)); return {id:h.id,i:h.i,n:h.n,data:msg.slice(z+1)}; }catch(e){ return null; } }
+// Reassembly buffers, keyed by chunk id; a completed set becomes the original payload and is dropped here.
+const CHUNKS={};
+function takeChunk(c,onWhole){ let b=CHUNKS[c.id]; if(!b) b=CHUNKS[c.id]={n:c.n,parts:{},got:0};
+  if(b.parts[c.i]===undefined){ b.parts[c.i]=c.data; b.got++; }
+  if(b.got>=b.n){ let whole=''; for(let i=0;i<b.n;i++){ if(b.parts[i]===undefined) return; whole+=b.parts[i]; }
+    delete CHUNKS[c.id]; onWhole(whole); } }
 async function sendMedia(media){ if(!S.sel){ toast('Open a chat first'); return; }
   const local={id:'m'+Date.now()+':'+Math.floor(Math.random()*99999),out:true,from:S.me,body:'',media,pay:null,t:Date.now()};
   addMsg(S.sel,local); renderList(); renderMsgs();
   try{
-    if(isGroup(S.sel)){ const g=S.chats[S.sel].group;
-      const env='GRP1:'+JSON.stringify({g:g.gid,n:S.chats[S.sel].name,o:g.owner,m:g.members,s:g.seq,k:'media',md:media});
-      for(const mem of g.members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){} }
-    } else { await rpc('letterSend',{to:S.sel,msg:'MEDIA1:'+JSON.stringify(media)}); }
+    const isGrp=isGroup(S.sel);
+    const dmPayload='MEDIA1:'+JSON.stringify(media);
+    const grpPayload=isGrp?('GRP1:'+JSON.stringify({g:S.chats[S.sel].group.gid,n:S.chats[S.sel].name,o:S.chats[S.sel].group.owner,m:S.chats[S.sel].group.members,s:S.chats[S.sel].group.seq,k:'media',md:media})):null;
+    const payload=isGrp?grpPayload:dmPayload;
+    const parts=payload.length>CHUNK_BYTES?packChunks(payload):[payload];
+    if(parts.length>1) toast('Sealing '+parts.length+' chunks…');
+    const targets=isGrp?S.chats[S.sel].group.members.filter(m=>m!==S.me):[S.sel];
+    for(const to of targets){ for(const part of parts){ try{ await rpc('letterSend',{to,msg:part}); }catch(e){ toast('Send failed: '+e.message); return; } } }
   }catch(e){ toast('Send failed: '+e.message); }
 }
 function mediaHtml(md){ if(!md) return '';
@@ -463,19 +482,7 @@ async function restoreHistory(){ if(!S.me) return;
     let r=null; try{ r=await rpc('letterHistory',{from}); }catch(e){ break; }
     const msgs=(r&&r.messages)||[], page=(r&&r.page)||64;
     let changed=false;
-    for(const m of msgs){
-      const gp=parseGrp(m.msg);
-      if(gp&&gp.g){ ensureGroup(gp.g,gp,m.from);
-        if(gp.k==='msg'){ if(addMsg('grp:'+gp.g,{id:'h:'+m.ord+':'+hash(m.msg),out:false,from:m.from,body:gp.b,pay:null,t:Date.now()-1})) changed=true; }
-        else if(gp.k==='media'&&gp.md){ if(addMsg('grp:'+gp.g,{id:'hm:'+m.ord+':'+hash(m.msg),out:false,from:m.from,body:'',media:gp.md,pay:null,t:Date.now()-1})) changed=true; }
-        continue;
-      }
-      const md=/^MEDIA1:(.*)$/s.exec(m.msg||'');
-      if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
-        if(mo&&addMsg(m.from,{id:'hM:'+m.ord+':'+hash(m.msg),out:false,body:'',media:mo,pay:null,t:Date.now()-1})) changed=true; continue; }
-      let body=m.msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(m.msg||''); if(pm){pay=pm[1];body=pm[2];}
-      if(addMsg(m.from,{id:'h:'+m.ord+':'+hash(m.msg),out:false,body,pay,t:Date.now()-1})) changed=true;
-    }
+    for(const m of msgs){ if(routeLetter(m.from,m.msg,'h'+m.ord,Date.now()-1)) changed=true; }
     got+=msgs.length;
     if(changed) renderList();
     from+=page;
@@ -484,27 +491,33 @@ async function restoreHistory(){ if(!S.me) return;
   }
   if(got>0){ renderList(); if(S.sel) renderMsgs(); toast('History restored from chain · '+got+' letter'+(got===1?'':'s')+' 🔒'); }
 }
+// ONE router for every opened letter — live inbox, chain-history restore, and reassembled chunks all land
+// here, so a payload behaves identically however it arrived. `tag` keeps ids distinct per source; returns
+// true if anything changed.
+function routeLetter(from,msg,tag,ts){
+  const ch=parseChunk(msg);
+  if(ch){ let changed=false; takeChunk(ch,whole=>{ changed=routeLetter(from,whole,tag+':w',ts)||changed; }); return changed; }
+  const gp=parseGrp(msg);
+  if(gp&&gp.k==='join'&&gp.h){ // someone found my group by its @handle and wants in — auto-admit (join-to-read)
+    const mine=Object.values(S.chats).find(c=>c.group&&c.group.owner===S.me&&c.group.handle===gp.h);
+    if(mine){ addGroupMember(mine.group.gid, from); return true; }
+    return false;
+  }
+  if(gp&&gp.g){ // a group letter — authenticated sender is `from`; owner-only roster adoption inside ensureGroup
+    ensureGroup(gp.g,gp,from);
+    if(gp.k==='msg') return addMsg('grp:'+gp.g,{id:'g:'+tag+':'+gp.g+':'+from+':'+hash(msg),out:false,from,body:gp.b,pay:null,t:ts});
+    if(gp.k==='media'&&gp.md) return addMsg('grp:'+gp.g,{id:'gm:'+tag+':'+gp.g+':'+from+':'+hash(msg),out:false,from,body:'',media:gp.md,pay:null,t:ts});
+    return true; // roster/control — the group now exists/updated in the list
+  }
+  const md=/^MEDIA1:(.*)$/s.exec(msg||'');
+  if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
+    return !!(mo&&addMsg(from,{id:'m:'+tag+':'+from+':'+hash(msg),out:false,body:'',media:mo,pay:null,t:ts})); }
+  let body=msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(msg||''); if(pm){pay=pm[1];body=pm[2];}
+  return addMsg(from,{id:'t:'+tag+':'+from+':'+hash(msg),out:false,body,pay,t:ts});
+}
 async function refresh(){
   try{ const r=await rpc('letterInbox'); const msgs=(r&&r.messages)||[]; let changed=false;
-    for(let i=0;i<msgs.length;i++){ const m=msgs[i],from=m.from;
-      const gp=parseGrp(m.msg);
-      if(gp&&gp.k==='join'&&gp.h){ // someone found my group by its @handle and wants in — auto-admit (join-to-read)
-        const mine=Object.values(S.chats).find(c=>c.group&&c.group.owner===S.me&&c.group.handle===gp.h);
-        if(mine){ addGroupMember(mine.group.gid, from); changed=true; }
-        continue;
-      }
-      if(gp&&gp.g){ // a group letter — authenticated sender is `from`; owner-only roster adoption inside ensureGroup
-        ensureGroup(gp.g,gp,from);
-        if(gp.k==='msg'){ if(addMsg('grp:'+gp.g,{id:'gin:'+gp.g+':'+from+':'+hash(m.msg)+':'+i,out:false,from,body:gp.b,pay:null,t:Date.now()})) changed=true; }
-        else if(gp.k==='media'&&gp.md){ if(addMsg('grp:'+gp.g,{id:'gmd:'+gp.g+':'+from+':'+hash(m.msg)+':'+i,out:false,from,body:'',media:gp.md,pay:null,t:Date.now()})) changed=true; }
-        else { changed=true; } // roster/control — the group now exists/updated in the list
-        continue;
-      }
-      const md=/^MEDIA1:(.*)$/s.exec(m.msg||'');
-      if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
-        if(mo&&addMsg(from,{id:'imd:'+from+':'+hash(m.msg)+':'+i,out:false,body:'',media:mo,pay:null,t:Date.now()})) changed=true; continue; }
-      let body=m.msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(m.msg||''); if(pm){pay=pm[1];body=pm[2];}
-      if(addMsg(from,{id:'in:'+from+':'+hash(m.msg)+':'+i,out:false,body,pay,t:Date.now()})) changed=true; }
+    for(let i=0;i<msgs.length;i++){ if(routeLetter(msgs[i].from,msgs[i].msg,'live',Date.now())) changed=true; }
     if(changed){ renderList(); if(S.sel) renderMsgs(); }
   }catch(e){}
 }
