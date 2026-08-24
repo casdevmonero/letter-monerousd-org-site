@@ -356,6 +356,7 @@ async function sendGroup(gid,text){ const c=S.chats['grp:'+gid]; if(!c) return; 
   addMsg('grp:'+gid,{id:'gout:'+Date.now(),out:true,from:S.me,body:text,pay:null,t:Date.now()}); renderList(); renderMsgs();
   const env=grpEnvelope(g,'msg',text);
   for(const mem of g.members){ if(mem===S.me) continue; try{ await rpc('letterSend',{to:mem,msg:env}); }catch(e){ toast('A member is unreachable'); } }
+  rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:'grp:'+gid,g:gid,n:c.name,m:g.members,h:g.handle||'',k:'msg',b:text})}).catch(()=>{});
 }
 async function addGroupMember(gid,v){ const c=S.chats['grp:'+gid]; if(!c) return; const g=c.group;
   if(g.owner!==S.me){ toast('Only the group owner can add members'); return; }
@@ -414,6 +415,9 @@ async function sendMedia(media){ if(!S.sel){ toast('Open a chat first'); return;
     if(parts.length>1) toast('Sealing '+parts.length+' chunks…');
     const targets=isGrp?S.chats[S.sel].group.members.filter(m=>m!==S.me):[S.sel];
     for(const to of targets){ for(const part of parts){ try{ await rpc('letterSend',{to,msg:part}); }catch(e){ toast('Send failed: '+e.message); return; } } }
+    const gg=isGrp?S.chats[S.sel].group:null;
+    const scp='SENT1:'+JSON.stringify(isGrp?{to:S.sel,g:gg.gid,n:S.chats[S.sel].name,m:gg.members,h:gg.handle||'',k:'media',md:media}:{to:S.sel,k:'media',md:media});
+    for(const part of (scp.length>CHUNK_BYTES?packChunks(scp):[scp])){ rpc('letterSend',{to:S.me,msg:part}).catch(()=>{}); }
   }catch(e){ toast('Send failed: '+e.message); }
 }
 function mediaHtml(md){ if(!md) return '';
@@ -508,6 +512,17 @@ async function restoreHistory(){ if(!S.me) return;
 function routeLetter(from,msg,tag,ts){
   const ch=parseChunk(msg);
   if(ch){ let changed=false; takeChunk(ch,whole=>{ changed=routeLetter(from,whole,tag+':w',ts)||changed; }); return changed; }
+  const sc=/^SENT1:(.*)$/s.exec(msg||'');
+  if(sc){ // my own sent-copy (sealed to MYSELF at send time) — the on-chain record of MY side of the chat.
+    if(from!==S.me||!tag.startsWith('h')) return false; // authenticated self-origin, history-restore only
+    let o=null; try{o=JSON.parse(sc[1]);}catch(e){ return false; }
+    if(!o||!o.to) return false;
+    const key=o.g?('grp:'+o.g):o.to;
+    if(o.g&&!S.chats[key]) S.chats[key]={addr:key,name:o.n||'Group',group:{gid:o.g,owner:S.me,members:o.m||[S.me],seq:1,handle:o.h||''},msgs:[],last:Date.now()};
+    if(o.k==='media'&&o.md) return addMsg(key,{id:'so:'+tag+':'+hash(msg),out:true,body:'',media:o.md,pay:null,t:ts});
+    if(o.k==='pay') return addMsg(key,{id:'sp:'+tag+':'+hash(msg),out:true,body:o.b||'',pay:String(o.amt||''),t:ts});
+    return addMsg(key,{id:'st:'+tag+':'+hash(msg),out:true,body:o.b||'',pay:null,t:ts});
+  }
   const gp=parseGrp(msg);
   if(gp&&gp.k==='join'&&gp.h){ // someone found my group by its @handle and wants in — auto-admit (join-to-read)
     const mine=Object.values(S.chats).find(c=>c.group&&c.group.owner===S.me&&c.group.handle===gp.h);
@@ -537,12 +552,14 @@ async function doSend(){ const t=$('#input'), body=(t.value||'').trim(); if(!bod
   try{
     if(isGroup(S.sel)){ await sendGroup(S.chats[S.sel].group.gid,body); }
     else { addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
-      await rpc('letterSend',{to:S.sel,msg:body}); refresh(); }
+      await rpc('letterSend',{to:S.sel,msg:body});
+      rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:S.sel,k:'msg',b:body})}).catch(()=>{}); refresh(); }
   }catch(e){ toast('Send failed: '+e.message); } finally{ b.classList.remove('sealing'); }
 }
 async function doPay(){ const amt=parseFloat($('#payAmt').value), note=($('#payNote').value||'').trim(), err=$('#payErr'); err.textContent='';
   if(!(amt>0)){ err.textContent='Enter an amount'; return; } $('#payGo').disabled=true;
   try{ await rpc('transfer',{to:S.sel,amount:amt}); await rpc('letterSend',{to:S.sel,msg:'PAY:'+amt+note});
+    rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:S.sel,k:'pay',amt:amt,b:note})}).catch(()=>{});
     addMsg(S.sel,{id:'pay:'+Date.now(),out:true,body:note,pay:String(amt),t:Date.now()}); closeModal('payModal'); renderList(); renderMsgs(); toast('Sent '+amt+' USDm 🔒');
   }catch(e){ err.textContent=e.message; } finally{ $('#payGo').disabled=false; }
 }
