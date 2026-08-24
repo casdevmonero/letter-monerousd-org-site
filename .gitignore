@@ -1,0 +1,20 @@
+# Sovereign site bundle — default-deny stance with web-asset allowlist.
+# Anything not explicitly allowed is blocked. New file types adding to
+# the bundle require a PR updating this list.
+
+# Default-deny.
+*
+
+# Web assets
+!*.html
+!*.htm
+!*.css
+!*.js
+!*.json
+!*.svg
+!*.png
+!*.jpg
+!CNAME
+!.nojekyll
+!.gitignore
+!README.md
