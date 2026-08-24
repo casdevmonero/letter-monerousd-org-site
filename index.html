@@ -519,9 +519,9 @@ function routeLetter(from,msg,tag,ts){
     if(!o||!o.to) return false;
     const key=o.g?('grp:'+o.g):o.to;
     if(o.g&&!S.chats[key]) S.chats[key]={addr:key,name:o.n||'Group',group:{gid:o.g,owner:S.me,members:o.m||[S.me],seq:1,handle:o.h||''},msgs:[],last:Date.now()};
-    if(o.k==='media'&&o.md) return addMsg(key,{id:'so:'+tag+':'+hash(msg),out:true,body:'',media:o.md,pay:null,t:ts});
-    if(o.k==='pay') return addMsg(key,{id:'sp:'+tag+':'+hash(msg),out:true,body:o.b||'',pay:String(o.amt||''),t:ts});
-    return addMsg(key,{id:'st:'+tag+':'+hash(msg),out:true,body:o.b||'',pay:null,t:ts});
+    if(o.k==='media'&&o.md) return addMsg(key,{id:'so:'+hash(msg),out:true,body:'',media:o.md,pay:null,t:ts});
+    if(o.k==='pay') return addMsg(key,{id:'sp:'+hash(msg),out:true,body:o.b||'',pay:String(o.amt||''),t:ts});
+    return addMsg(key,{id:'st:'+hash(msg),out:true,body:o.b||'',pay:null,t:ts});
   }
   const gp=parseGrp(msg);
   if(gp&&gp.k==='join'&&gp.h){ // someone found my group by its @handle and wants in — auto-admit (join-to-read)
@@ -531,15 +531,15 @@ function routeLetter(from,msg,tag,ts){
   }
   if(gp&&gp.g){ // a group letter — authenticated sender is `from`; owner-only roster adoption inside ensureGroup
     ensureGroup(gp.g,gp,from);
-    if(gp.k==='msg') return addMsg('grp:'+gp.g,{id:'g:'+tag+':'+gp.g+':'+from+':'+hash(msg),out:false,from,body:gp.b,pay:null,t:ts});
-    if(gp.k==='media'&&gp.md) return addMsg('grp:'+gp.g,{id:'gm:'+tag+':'+gp.g+':'+from+':'+hash(msg),out:false,from,body:'',media:gp.md,pay:null,t:ts});
+    if(gp.k==='msg') return addMsg('grp:'+gp.g,{id:'g:'+gp.g+':'+from+':'+hash(msg),out:false,from,body:gp.b,pay:null,t:ts});
+    if(gp.k==='media'&&gp.md) return addMsg('grp:'+gp.g,{id:'gm:'+gp.g+':'+from+':'+hash(msg),out:false,from,body:'',media:gp.md,pay:null,t:ts});
     return true; // roster/control — the group now exists/updated in the list
   }
   const md=/^MEDIA1:(.*)$/s.exec(msg||'');
   if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
-    return !!(mo&&addMsg(from,{id:'m:'+tag+':'+from+':'+hash(msg),out:false,body:'',media:mo,pay:null,t:ts})); }
+    return !!(mo&&addMsg(from,{id:'m:'+from+':'+hash(msg),out:false,body:'',media:mo,pay:null,t:ts})); }
   let body=msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(msg||''); if(pm){pay=pm[1];body=pm[2];}
-  return addMsg(from,{id:'t:'+tag+':'+from+':'+hash(msg),out:false,body,pay,t:ts});
+  return addMsg(from,{id:'t:'+from+':'+hash(msg),out:false,body,pay,t:ts});
 }
 async function refresh(){
   try{ const r=await rpc('letterInbox'); const msgs=(r&&r.messages)||[]; let changed=false;
