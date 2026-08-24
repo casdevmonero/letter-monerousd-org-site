@@ -606,7 +606,7 @@ function qDrop(){ const v=($('#q').value||'').trim(), d=$('#qdrop'); d.innerHTML
     el.innerHTML='<div class="qa">'+escapeHtml(r.av)+'</div><div class="qt"><b>'+escapeHtml(r.b)+'</b><span>'+escapeHtml(r.s)+'</span></div>';
     el.onclick=()=>{ d.classList.remove('on'); $('#q').value=''; renderList(); r.act(); }; d.appendChild(el); }
   d.classList.add('on'); }
-function openChat(addr){ S.sel=addr; renderList(); renderMsgs(); }
+function openChat(addr){ selectChat(addr); renderList(); }
 function startChatWith(addr,label){ if(!S.chats[addr]) S.chats[addr]={addr,name:label||null,msgs:[],last:Date.now()};
   openChat(addr); }
 function openGroupModal(){ $('#grpName').value=''; $('#grpMembers').value=''; $('#grpErr').textContent=''; openModal('groupModal'); setTimeout(()=>$('#grpName').focus(),60); }
