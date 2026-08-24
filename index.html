@@ -293,6 +293,13 @@ function rpc(method,params){ return new Promise((res,rej)=>{ const id=_rid++; _p
 window.addEventListener('message',(ev)=>{ const d=ev.data; if(!d) return; if(d.type==='monerousd:res'&&_pending.has(d.id)){ const {res,rej}=_pending.get(d.id); _pending.delete(d.id); d.ok?res(d.result):rej(new Error(d.error||'rpc error')); } });
 
 const S={me:null,chats:{},sel:null,tab:'chats'};
+// THREAD-MERGE ledgers (session state; SENT1 restore refills sent): cm = content hash of a sealed letter.
+// A reply that echoes one of OUR sent cms proves its sender decapped that exact letter — the only safe
+// basis for merging a typed-address thread into the counterpart's canonical identity (no hijack surface).
+const sentCms={};  // chatKey -> Set(cm of letters WE sealed to it)
+const recvCms={};  // chatKey -> latest inbound cm (what our replies echo as the ack)
+function cmNote(map,key,cm){ if(!cm) return; (map[key]=map[key]||new Set()).add(cm); }
+
 const $=s=>document.querySelector(s);
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2400); }
 function short(a){ return a?(a.slice(0,10)+'…'+a.slice(-6)):''; }
@@ -510,7 +517,7 @@ async function restoreHistory(){ if(!S.me) return;
 // ONE router for every opened letter — live inbox, chain-history restore, and reassembled chunks all land
 // here, so a payload behaves identically however it arrived. `tag` keeps ids distinct per source; returns
 // true if anything changed.
-function routeLetter(from,msg,tag,ts){
+function routeLetter(from,msg,tag,ts,inCm){
   const ch=parseChunk(msg);
   if(ch){ let changed=false; takeChunk(ch,whole=>{ changed=routeLetter(from,whole,tag+':w',ts)||changed; }); return changed; }
   const sc=/^SENT1:(.*)$/s.exec(msg||'');
@@ -520,6 +527,7 @@ function routeLetter(from,msg,tag,ts){
     if(!o||!o.to) return false;
     const key=o.g?('grp:'+o.g):o.to;
     if(o.g&&!S.chats[key]) S.chats[key]={addr:key,name:o.n||'Group',group:{gid:o.g,owner:S.me,members:o.m||[S.me],seq:1,handle:o.h||''},msgs:[],last:Date.now()};
+    if(o.cm) cmNote(sentCms,key,o.cm);
     if(o.k==='media'&&o.md) return addMsg(key,{id:'so:'+hash(msg),out:true,body:'',media:o.md,pay:null,t:ts});
     if(o.k==='pay') return addMsg(key,{id:'sp:'+hash(msg),out:true,body:o.b||'',pay:String(o.amt||''),t:ts});
     return addMsg(key,{id:'st:'+hash(msg),out:true,body:o.b||'',pay:null,t:ts});
@@ -540,11 +548,27 @@ function routeLetter(from,msg,tag,ts){
   if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
     return !!(mo&&addMsg(from,{id:'m:'+from+':'+hash(msg),out:false,body:'',media:mo,pay:null,t:ts})); }
   let body=msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(msg||''); if(pm){pay=pm[1];body=pm[2];}
-  return addMsg(from,{id:'t:'+from+':'+hash(msg),out:false,body,pay,t:ts});
+  const m1=/^MSG1:(.*)$/s.exec(body||'');
+  if(m1){ let o=null; try{o=JSON.parse(m1[1]);}catch(e){}
+    if(o){ body=o.b||'';
+      // PROVEN-ACK THREAD MERGE: the sender echoed the content hash of a letter WE sealed to some chat T.
+      // Only T's true owner could hold that hash, so `from` IS T's canonical identity — merge T into it.
+      if(o.ack){ for(const T of Object.keys(sentCms)){ if(T!==from&&sentCms[T]&&sentCms[T].has(o.ack)){
+        const src=S.chats[T], dst=(S.chats[from]=S.chats[from]||{addr:from,name:src&&src.name,msgs:[],last:Date.now()});
+        if(src){ for(const mm of src.msgs){ if(!dst.msgs.some(x=>x.id===mm.id)) dst.msgs.push(mm); }
+          dst.msgs.sort((a,b)=>a.t-b.t); dst.last=Math.max(dst.last||0,src.last||0);
+          (sentCms[from]=sentCms[from]||new Set()); for(const c of (sentCms[T]||[])) sentCms[from].add(c);
+          delete S.chats[T]; delete sentCms[T]; if(S.sel===T) S.sel=from; }
+      } } }
+    }
+  }
+  const hit=addMsg(from,{id:'t:'+from+':'+hash(msg),out:false,body,pay,t:ts});
+  if(hit&&inCm&&S.chats[from]){ cmNote(recvCms,from,inCm); S.chats[from].lastInCm=inCm; }
+  return hit;
 }
 async function refresh(){
   try{ const r=await rpc('letterInbox'); const msgs=(r&&r.messages)||[]; let changed=false;
-    for(let i=0;i<msgs.length;i++){ if(routeLetter(msgs[i].from,msgs[i].msg,'live',Date.now())) changed=true; }
+    for(let i=0;i<msgs.length;i++){ if(routeLetter(msgs[i].from,msgs[i].msg,'live',Date.now(),msgs[i].cm)) changed=true; }
     if(changed){ renderList(); if(S.sel) renderMsgs(); }
   }catch(e){}
 }
@@ -553,8 +577,10 @@ async function doSend(){ const t=$('#input'), body=(t.value||'').trim(); if(!bod
   try{
     if(isGroup(S.sel)){ await sendGroup(S.chats[S.sel].group.gid,body); }
     else { addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
-      await rpc('letterSend',{to:S.sel,msg:body});
-      rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:S.sel,k:'msg',b:body})}).catch(()=>{}); refresh(); }
+      const ack=(S.chats[S.sel]&&S.chats[S.sel].lastInCm)||null;
+      const r=await rpc('letterSend',{to:S.sel,msg:'MSG1:'+JSON.stringify(ack?{b:body,ack}:{b:body})});
+      if(r&&r.cm) cmNote(sentCms,S.sel,r.cm);
+      rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:S.sel,k:'msg',b:body,cm:(r&&r.cm)||undefined})}).catch(()=>{}); refresh(); }
   }catch(e){ toast('Send failed: '+e.message); } finally{ b.classList.remove('sealing'); }
 }
 async function doPay(){ const amt=parseFloat($('#payAmt').value), note=($('#payNote').value||'').trim(), err=$('#payErr'); err.textContent='';
