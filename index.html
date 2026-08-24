@@ -48,7 +48,18 @@
   .me .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:5px;vertical-align:middle}
   .me.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:blink 2s ease-in-out infinite}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
-  .search{padding:10px 14px;display:flex;gap:8px;align-items:center}
+  .qdrop{position:absolute;left:14px;right:14px;top:100%;margin-top:6px;z-index:40;background:var(--panelSolid);
+    border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.55);overflow:hidden;display:none}
+  .qdrop.on{display:block}
+  .qrow{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
+  .qrow:last-child{border-bottom:none}
+  .qrow:hover,.qrow.sel{background:var(--hover)}
+  .qrow .qa{width:30px;height:30px;border-radius:9px;background:linear-gradient(135deg,var(--accDeep),var(--acc));
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#1a0d00;flex:0 0 30px}
+  .qrow .qt{min-width:0}
+  .qrow .qt b{display:block;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .qrow .qt span{font-size:11px;color:var(--muted)}
+  .search{position:relative;padding:10px 14px;display:flex;gap:8px;align-items:center}
   .search input{flex:1;min-width:0;background:rgba(255,255,255,.05);border:1px solid transparent;border-radius:20px;color:var(--text);padding:10px 14px;font-size:13px;outline:none;transition:.2s}
   .search input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.12)}
   .newbtn{flex:none;width:38px;height:38px;border-radius:50%;border:none;background:linear-gradient(135deg,var(--acc),var(--accDeep));color:#fff;font-size:16px;cursor:pointer;box-shadow:0 4px 16px var(--glow);transition:.15s}
@@ -167,7 +178,7 @@
       <div class="brand"><span class="mark"><svg><use href="#letterMark"/></svg></span><span class="bt">Letter</span></div>
       <div class="me" id="me"><span class="dot"></span>connecting…</div>
     </div>
-    <div class="search"><input id="q" placeholder="Search, @username, or paste address"><button class="newbtn" id="newBtn" title="New chat">✚</button></div>
+    <div class="search"><input id="q" placeholder="Search, @username, or paste address" autocomplete="off"><button class="newbtn" id="newBtn" title="New chat">✚</button><div class="qdrop" id="qdrop"></div></div>
     <div class="tabs">
       <div class="tab active" data-tab="chats">Chats</div>
       <div class="tab" data-tab="groups">Groups</div>
@@ -468,9 +479,9 @@ function renderMsgs(){ const c=S.chats[S.sel], box=$('#msgs'); if(!c){box.innerH
 
 async function boot(){
   try{ const r=await rpc('letterAddress'); S.me=r&&r.address; $('#me').innerHTML='<span class="dot"></span>You · '+short(S.me); $('#me').classList.add('on'); }
-  catch(e){ $('#me').innerHTML='<span class="dot"></span>Open in the wallet'; }
+  catch(e){ const r=(e&&e.message)?String(e.message).slice(0,60):'no bridge'; $('#me').innerHTML='<span class="dot"></span>Open in the wallet · '+r; $('#me').title=r; }
   restoreHistory(); // fire-and-forget: the seed-restore walk fills chats as pages land
-  await refresh(); setInterval(refresh,5000);
+  await refresh(); setInterval(refresh,2000);
 }
 // ⭐ CHAT HISTORY FROM THE CHAIN — your wallet IS your login: page the on-chain letter columns from the
 // start, open only what is sealed to you (the wallet authenticates every sender), and rebuild the full
@@ -526,7 +537,7 @@ async function doSend(){ const t=$('#input'), body=(t.value||'').trim(); if(!bod
   try{
     if(isGroup(S.sel)){ await sendGroup(S.chats[S.sel].group.gid,body); }
     else { addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
-      await rpc('letterSend',{to:S.sel,msg:body}); }
+      await rpc('letterSend',{to:S.sel,msg:body}); refresh(); }
   }catch(e){ toast('Send failed: '+e.message); } finally{ b.classList.remove('sealing'); }
 }
 async function doPay(){ const amt=parseFloat($('#payAmt').value), note=($('#payNote').value||'').trim(), err=$('#payErr'); err.textContent='';
@@ -545,7 +556,42 @@ function openModal(id){ $('#'+id).classList.add('on'); } function closeModal(id)
 function autoGrow(t){ t.style.height='auto'; t.style.height=Math.min(130,t.scrollHeight)+'px'; }
 
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{ document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active'); S.tab=t.dataset.tab; renderList(); });
-$('#q').oninput=renderList;
+$('#q').oninput=()=>{ renderList(); qDrop(); };
+$('#q').addEventListener('keydown',(ev)=>{ const d=$('#qdrop');
+  if(ev.key==='Escape'){ d.classList.remove('on'); return; }
+  const rows=[...d.querySelectorAll('.qrow')]; if(!rows.length) return;
+  let ix=rows.findIndex(r=>r.classList.contains('sel'));
+  if(ev.key==='ArrowDown'){ ev.preventDefault(); ix=Math.min(rows.length-1,ix+1); rows.forEach(r=>r.classList.remove('sel')); rows[ix].classList.add('sel'); }
+  else if(ev.key==='ArrowUp'){ ev.preventDefault(); ix=Math.max(0,ix-1); rows.forEach(r=>r.classList.remove('sel')); rows[ix].classList.add('sel'); }
+  else if(ev.key==='Enter'){ ev.preventDefault(); (rows[ix>=0?ix:0]).click(); }
+});
+document.addEventListener('click',(ev)=>{ if(!ev.target.closest('.search')) $('#qdrop').classList.remove('on'); });
+// The live results panel under the search bar: existing chats match first; an @handle offers an on-chain
+// lookup (names AND groups); a pasted full address offers "start a chat". Everything resolves through the
+// wallet bridge — the node's directory is the only name authority.
+function qDrop(){ const v=($('#q').value||'').trim(), d=$('#qdrop'); d.innerHTML='';
+  if(!v){ d.classList.remove('on'); return; }
+  const vl=v.toLowerCase(); const rows=[];
+  for(const c of Object.values(S.chats)){
+    const nm=displayName(c.addr); if(!(nm.toLowerCase().includes(vl)||c.addr.toLowerCase().includes(vl))) continue;
+    rows.push({av:nm.replace('@','').slice(0,2).toUpperCase(),b:nm,s:isGroup(c.addr)?'Group chat':'Chat',act:()=>{ openChat(c.addr); }});
+    if(rows.length>=5) break;
+  }
+  if(v.startsWith('@')&&v.length>1){
+    rows.push({av:'@',b:'Find '+v+' on-chain',s:'Look up this @username in the chain directory',act:async()=>{ const a=await resolveTo(v); if(a){ startChatWith(a,v); } else { toast('No one owns '+v+' yet'); } }});
+    rows.push({av:'👥',b:'Join group '+v,s:'Find this public group by its on-chain handle',act:()=>{ joinByHandle(v); }});
+  }
+  if(!v.startsWith('@')&&v.length>60&&/^[a-zA-Z0-9]+$/.test(v)){
+    rows.push({av:'✉',b:'Start a chat with this address',s:v.slice(0,18)+'… · PQ-sealed',act:()=>{ startChatWith(v,null); }});
+  }
+  if(!rows.length){ d.classList.remove('on'); return; }
+  for(const r of rows){ const el=document.createElement('div'); el.className='qrow';
+    el.innerHTML='<div class="qa">'+escapeHtml(r.av)+'</div><div class="qt"><b>'+escapeHtml(r.b)+'</b><span>'+escapeHtml(r.s)+'</span></div>';
+    el.onclick=()=>{ d.classList.remove('on'); $('#q').value=''; renderList(); r.act(); }; d.appendChild(el); }
+  d.classList.add('on'); }
+function openChat(addr){ S.sel=addr; renderList(); renderMsgs(); }
+function startChatWith(addr,label){ if(!S.chats[addr]) S.chats[addr]={addr,name:label||null,msgs:[],last:Date.now()};
+  openChat(addr); }
 function openGroupModal(){ $('#grpName').value=''; $('#grpMembers').value=''; $('#grpErr').textContent=''; openModal('groupModal'); setTimeout(()=>$('#grpName').focus(),60); }
 $('#startBtn').onclick=()=>{ openModal('startModal'); setTimeout(()=>$('#startInput').focus(),60); };
 $('#newBtn').onclick=()=>{ if(S.tab==='groups'){ openGroupModal(); } else { openModal('startModal'); setTimeout(()=>$('#startInput').focus(),60); } };
