@@ -645,7 +645,9 @@ function renderMsgs(){ const c=S.chats[S.sel], box=$('#msgs'); if(!c){box.innerH
 
 async function boot(){
   try{ const r=await rpc('letterAddress'); S.me=r&&r.address; paintMe(); $('#me').classList.add('on');
-    getProfile(S.me,true).then(pr=>{ if(pr){ S.myProfile=pr; S.myFeeMicro=pr.fee_micro||0; paintMe(); } });
+    // AWAITED, not fire-and-forget: my own DM fee must be known BEFORE history replays stranger letters,
+    // or a fresh-device restore would classify every request as an open chat (fee gate silently off).
+    try{ const pr=await getProfile(S.me,true); if(pr){ S.myProfile=pr; S.myFeeMicro=pr.fee_micro||0; paintMe(); } }catch(e){}
   }
   catch(e){ const r=(e&&e.message)?String(e.message).slice(0,60):'no bridge'; $('#me').innerHTML='<span class="dot"></span>Open in the wallet · '+r; $('#me').title=r; }
   restoreHistory(); // fire-and-forget: the seed-restore walk fills chats as pages land
