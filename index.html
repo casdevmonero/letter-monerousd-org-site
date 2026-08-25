@@ -268,9 +268,13 @@
 <div class="modal-bg" id="profileModal">
   <div class="modal">
     <h3>Your profile</h3>
-    <p>Published <b>on-chain</b>, signed by your wallet — only <b>you</b> can ever write it (the chain refuses any other key, cryptographically). No photo uploads: your avatar is derived from your address, so there is nothing to host and nothing to leak.</p>
-    <div style="display:flex;gap:12px;align-items:center;margin:6px 0 10px"><div class="ava idico" id="pfAva" style="width:52px;height:52px;border-radius:14px"></div>
-      <button class="btn" id="pfCopy" style="font-size:12.5px">Copy my address</button></div>
+    <p>Published <b>on-chain</b>, signed by your wallet — only <b>you</b> can ever write it (the chain refuses any other key, cryptographically). Photo optional: without one, your avatar is derived from your address.</p>
+    <div style="display:flex;gap:12px;align-items:center;margin:6px 0 10px"><div class="ava idico" id="pfAva" style="width:52px;height:52px;border-radius:14px;overflow:hidden"></div>
+      <button class="btn" id="pfPhoto" style="font-size:12.5px">📷 Set photo</button>
+      <button class="btn" id="pfPhotoDel" style="font-size:12.5px;display:none">Remove photo</button>
+      <button class="btn" id="pfCopy" style="font-size:12.5px">Copy my address</button>
+      <input type="file" id="pfFile" accept="image/*" style="display:none"></div>
+    <p style="font-size:12px;color:var(--muted);margin:0 0 6px">Your photo lives <b>on the chain</b>, inside your signed profile — no photo host, no CDN, nothing fetches from a third party (so viewing it can't leak anyone's IP). Downscaled to 128px.</p>
     <label>Display name</label>
     <input id="pfName" maxlength="48" placeholder="How you appear in chats" autocomplete="off">
     <label>Bio</label>
@@ -352,14 +356,17 @@ function identicon(a,px){
     if(x<2) cells+='<rect x="'+(4-x)+'" y="'+y+'" width="1.06" height="1.06"/>'; }
   return '<svg viewBox="-0.7 -0.7 6.4 6.4" style="width:'+px+'px;height:'+px+'px;fill:rgba(255,255,255,.9)" shape-rendering="crispEdges">'+cells+'</svg>';
 }
-function avatarHtml(a,grp,px){ return grp?'👥':identicon(a,px||22); }
+function avatarHtml(a,grp,px){ if(grp) return '👥';
+  const p=profiles[a];
+  if(p&&p.avatar) return '<img src="data:image/jpeg;base64,'+p.avatar+'" style="width:100%;height:100%;object-fit:cover;border-radius:inherit" alt="">';
+  return identicon(a,px||22); }
 
 // On-chain profile lookup, cached 5 min. Re-renders when a profile first lands (names pop in live).
 async function getProfile(a,force){ if(!a||isGroup(a)) return null;
   const c=profiles[a]; if(c&&!force&&Date.now()-c.ts<300000) return c;
   try{ const r=await rpc('profileGet',{address:a});
     const had=c&&c.display;
-    profiles[a]={display:(r&&r.display)||null,bio:(r&&r.bio)||'',fee_micro:(r&&r.fee_micro)||0,ts:Date.now()};
+    profiles[a]={display:(r&&r.display)||null,bio:(r&&r.bio)||'',fee_micro:(r&&r.fee_micro)||0,avatar:(r&&r.avatar)||'',ts:Date.now()};
     if((profiles[a].display||'')!==(had||'')){ renderList(); if(S.sel===a) paintHead(); }
     return profiles[a];
   }catch(e){ return c||null; }
@@ -656,12 +663,29 @@ async function boot(){
 function paintMe(){ if(!S.me) return; const nm=(S.myProfile&&S.myProfile.display)||('You · '+short(S.me));
   $('#me').innerHTML='<span class="dot"></span>'+escapeHtml(nm)+' <span style="opacity:.55;font-size:11px">· profile ▾</span>'; }
 // ── PROFILE EDITOR — publish display/bio/DM-fee to the chain (wallet-signed; only your key can ever write it).
+let _pfAvatar=''; // staged photo b64 for the editor session
+function _pfPaintAva(){ const av=$('#pfAva'); av.style.background=avaColor(S.me);
+  av.innerHTML=_pfAvatar?'<img src="data:image/jpeg;base64,'+_pfAvatar+'" style="width:100%;height:100%;object-fit:cover" alt="">':identicon(S.me,30);
+  $('#pfPhotoDel').style.display=_pfAvatar?'inline-flex':'none'; }
 function openProfile(){ if(!S.me){ toast('Open Letter inside the wallet first'); return; }
   const pr=S.myProfile||{};
-  $('#pfAva').style.background=avaColor(S.me); $('#pfAva').innerHTML=avatarHtml(S.me,false,30);
+  _pfAvatar=(pr.avatar)||''; _pfPaintAva();
   $('#pfName').value=pr.display||''; $('#pfBio').value=pr.bio||'';
   $('#pfFee').value=pr.fee_micro?String(pr.fee_micro/1e6):''; $('#pfErr').textContent='';
   openModal('profileModal'); setTimeout(()=>$('#pfName').focus(),60);
+}
+// Downscale the chosen image to a 128px cover-cropped JPEG (~4-10KB) — small enough to ride the signed
+// on-chain entry, sharp enough for every avatar size the app renders.
+function pickProfilePhoto(file){ const img=new Image();
+  img.onload=()=>{ const S128=128, c=document.createElement('canvas'); c.width=S128; c.height=S128;
+    const x=c.getContext('2d'); const m=Math.min(img.width,img.height);
+    x.drawImage(img,(img.width-m)/2,(img.height-m)/2,m,m,0,0,S128,S128);
+    let q=0.82, b64=c.toDataURL('image/jpeg',q).split(',')[1];
+    while(b64.length>23000&&q>0.4){ q-=0.12; b64=c.toDataURL('image/jpeg',q).split(',')[1]; }
+    if(b64.length>23000){ $('#pfErr').textContent='That image will not compress small enough — try another.'; return; }
+    _pfAvatar=b64; _pfPaintAva(); URL.revokeObjectURL(img.src); };
+  img.onerror=()=>{ $('#pfErr').textContent='Could not read that image.'; };
+  img.src=URL.createObjectURL(file);
 }
 async function saveProfile(){ const err=$('#pfErr'); err.textContent='';
   const display=($('#pfName').value||'').trim(), bio=($('#pfBio').value||'').trim();
@@ -669,8 +693,8 @@ async function saveProfile(){ const err=$('#pfErr'); err.textContent='';
   if(!display){ err.textContent='Pick a display name'; return; }
   if(feeU<0){ err.textContent='The fee cannot be negative'; return; }
   $('#pfSave').disabled=true;
-  try{ await rpc('profileSet',{display,bio,feeMicro:Math.round(feeU*1e6)});
-    S.myProfile={display,bio,fee_micro:Math.round(feeU*1e6),ts:Date.now()};
+  try{ await rpc('profileSet',{display,bio,feeMicro:Math.round(feeU*1e6),avatar:_pfAvatar});
+    S.myProfile={display,bio,fee_micro:Math.round(feeU*1e6),avatar:_pfAvatar,ts:Date.now()};
     profiles[S.me]=S.myProfile; S.myFeeMicro=S.myProfile.fee_micro;
     paintMe(); closeModal('profileModal'); renderList();
     toast('Profile published on-chain 🔒'+(S.myFeeMicro>0?' · DM fee '+feeUsdm(S.myFeeMicro)+' USDm':''));
@@ -874,6 +898,9 @@ $('#input').addEventListener('input',e=>autoGrow(e.target));
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
 $('#me').onclick=openProfile;
 $('#pfSave').onclick=saveProfile; $('#pfCancel').onclick=()=>closeModal('profileModal');
+$('#pfPhoto').onclick=()=>$('#pfFile').click();
+$('#pfPhotoDel').onclick=()=>{ _pfAvatar=''; _pfPaintAva(); };
+$('#pfFile').addEventListener('change',e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(f) pickProfilePhoto(f); });
 $('#pfCopy').onclick=()=>{ if(S.me){ try{navigator.clipboard.writeText(S.me);}catch(e){} toast('Your Letter address copied'); } };
 $('#menuBtn').onclick=(ev)=>{ ev.stopPropagation(); buildMenu(); $('#chatMenu').classList.toggle('on'); };
 document.addEventListener('click',e=>{ if(!e.target.closest('.menuwrap')) $('#chatMenu').classList.remove('on'); });
