@@ -52,6 +52,21 @@
   .qdrop{position:absolute;left:14px;right:14px;top:100%;margin-top:6px;z-index:40;background:var(--panelSolid);
     border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 44px rgba(0,0,0,.55);overflow:hidden;display:none}
   .qdrop.on{display:block}
+  .idico{display:flex;align-items:center;justify-content:center}
+  .menuwrap{position:relative}
+  .menu{position:absolute;right:0;top:110%;z-index:50;background:var(--panelSolid,#141416);border:1px solid var(--line);
+    border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.5);min-width:190px;padding:6px;display:none}
+  .menu.on{display:block}
+  .mrow{padding:10px 12px;border-radius:8px;cursor:pointer;font-size:14px;display:flex;gap:9px;align-items:center}
+  .mrow:hover{background:rgba(255,255,255,.06)}
+  .mrow.danger{color:#ff6d6d}
+  .feebar{display:none;gap:10px;align-items:center;margin:0 14px 10px;padding:11px 14px;border:1px solid rgba(255,150,60,.35);
+    background:rgba(255,122,0,.08);border-radius:12px;font-size:13.5px}
+  .feebar.on{display:flex}
+  .reqhdr{padding:9px 14px 4px;font-size:11.5px;font-weight:700;letter-spacing:.08em;color:var(--acc);text-transform:uppercase}
+  .reqact{display:flex;gap:6px;margin-left:auto}
+  .reqact .btn{padding:5px 10px;font-size:12px}
+  .pill{font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(255,122,0,.18);color:var(--acc);margin-left:6px}
   .qrow{display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--line)}
   .qrow:last-child{border-bottom:none}
   .qrow:hover,.qrow.sel{background:var(--hover)}
@@ -207,9 +222,12 @@
         <div class="spacer"></div>
         <button class="btn" id="addBtn" style="display:none">＋&nbsp; Add</button>
         <button class="btn pay" id="payBtn">💸&nbsp; Send USDm</button>
+        <div class="menuwrap"><button class="btn" id="menuBtn" title="Chat options" style="padding:9px 12px">⋯</button>
+          <div class="menu" id="chatMenu"></div></div>
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="stickers-panel" id="stickers"></div>
+      <div class="feebar" id="feebar"></div>
       <div class="composer">
         <button class="icobtn" id="attachBtn" title="Send a photo, video or GIF">📎</button>
         <button class="icobtn" id="stickerBtn" title="Stickers">🙂</button>
@@ -244,6 +262,24 @@
     <input id="grpHandle" placeholder="@rustdevs — registers on-chain so people can find &amp; join" autocomplete="off" spellcheck="false">
     <div class="err" id="grpErr"></div>
     <div class="actions"><button class="btn" id="grpCancel">Cancel</button><button class="btn pay" id="grpGo">Create group</button></div>
+  </div>
+</div>
+
+<div class="modal-bg" id="profileModal">
+  <div class="modal">
+    <h3>Your profile</h3>
+    <p>Published <b>on-chain</b>, signed by your wallet — only <b>you</b> can ever write it (the chain refuses any other key, cryptographically). No photo uploads: your avatar is derived from your address, so there is nothing to host and nothing to leak.</p>
+    <div style="display:flex;gap:12px;align-items:center;margin:6px 0 10px"><div class="ava idico" id="pfAva" style="width:52px;height:52px;border-radius:14px"></div>
+      <button class="btn" id="pfCopy" style="font-size:12.5px">Copy my address</button></div>
+    <label>Display name</label>
+    <input id="pfName" maxlength="48" placeholder="How you appear in chats" autocomplete="off">
+    <label>Bio</label>
+    <input id="pfBio" maxlength="140" placeholder="A line about you (optional)" autocomplete="off">
+    <label>DM fee for new contacts (USDm) — 0 = open DMs</label>
+    <input id="pfFee" type="number" min="0" step="0.01" placeholder="0.00" inputmode="decimal">
+    <p style="font-size:12.5px;color:var(--muted);margin-top:4px">Strangers must attach this payment to their first message. Real anti-spam: spam costs money, and the fee is <b>yours</b>.</p>
+    <div class="err" id="pfErr"></div>
+    <div class="actions"><button class="btn" id="pfCancel">Cancel</button><button class="btn pay" id="pfSave">Publish profile</button></div>
   </div>
 </div>
 
@@ -300,12 +336,64 @@ const sentCms={};  // chatKey -> Set(cm of letters WE sealed to it)
 const recvCms={};  // chatKey -> latest inbound cm (what our replies echo as the ack)
 function cmNote(map,key,cm){ if(!cm) return; (map[key]=map[key]||new Set()).add(cm); }
 
+// ── PROFILES / BLOCK / DM-FEE state. blocked+accepted are ON-CHAIN (self-sealed BLOCK1/ACC1 letters), so a
+//    seed restore on a fresh device brings back who you blocked and whose requests you accepted — no local store.
+const profiles={};                 // addr -> {display,bio,fee_micro,ts}
+S.blocked=new Set(); S.accepted=new Set(); S.myFeeMicro=0; S.myProfile=null;
+
+// Address-derived 5×5 mirrored identicon — Telegram-grade visual identity with NOTHING uploaded or hosted:
+// the avatar is a pure function of the address, so it needs no storage and can never leak a photo.
+function identicon(a,px){
+  let h1=0,h2=0x9e3779b9; for(const c of (a||'')){ h1=(h1*131+c.charCodeAt(0))>>>0; h2=((h2^c.charCodeAt(0))*16777619)>>>0; }
+  let st=((h1^h2)>>>0)||1; const rnd=()=>{ st^=st<<13;st>>>=0;st^=st>>17;st^=st<<5;st>>>=0; return st/4294967296; };
+  let cells='';
+  for(let y=0;y<5;y++) for(let x=0;x<3;x++){ if(rnd()<.48) continue;
+    cells+='<rect x="'+x+'" y="'+y+'" width="1.06" height="1.06"/>';
+    if(x<2) cells+='<rect x="'+(4-x)+'" y="'+y+'" width="1.06" height="1.06"/>'; }
+  return '<svg viewBox="-0.7 -0.7 6.4 6.4" style="width:'+px+'px;height:'+px+'px;fill:rgba(255,255,255,.9)" shape-rendering="crispEdges">'+cells+'</svg>';
+}
+function avatarHtml(a,grp,px){ return grp?'👥':identicon(a,px||22); }
+
+// On-chain profile lookup, cached 5 min. Re-renders when a profile first lands (names pop in live).
+async function getProfile(a,force){ if(!a||isGroup(a)) return null;
+  const c=profiles[a]; if(c&&!force&&Date.now()-c.ts<300000) return c;
+  try{ const r=await rpc('profileGet',{address:a});
+    const had=c&&c.display;
+    profiles[a]={display:(r&&r.display)||null,bio:(r&&r.bio)||'',fee_micro:(r&&r.fee_micro)||0,ts:Date.now()};
+    if((profiles[a].display||'')!==(had||'')){ renderList(); if(S.sel===a) paintHead(); }
+    return profiles[a];
+  }catch(e){ return c||null; }
+}
+function feeUsdm(mu){ return (mu/1e6).toFixed(mu%1e4===0?2:6).replace(/0+$/,'').replace(/\.$/,''); }
+
+// ── BLOCK / ACCEPT — persisted as letters sealed to MYSELF (chain-restored, cross-device, zero local state).
+function persistBlock(a,on){ rpc('letterSend',{to:S.me,msg:'BLOCK1:'+JSON.stringify({a,on:on?1:0})}).catch(()=>{}); }
+function persistAccept(a){ rpc('letterSend',{to:S.me,msg:'ACC1:'+JSON.stringify({a})}).catch(()=>{}); }
+function setBlocked(a,on){ if(on){S.blocked.add(a); if(S.chats[a]) S.chats[a].request=false;} else S.blocked.delete(a);
+  persistBlock(a,on); renderList(); if(S.sel===a) paintHead(); toast(on?'Blocked — they can no longer reach you':'Unblocked'); }
+function acceptRequest(a){ S.accepted.add(a); if(S.chats[a]) S.chats[a].request=false; persistAccept(a);
+  renderList(); if(S.sel===a){ paintHead(); } }
+
+// Recipient-side DM-fee verification: the stranger's first letter carried a `fee` note-commitment receipt —
+// ask MY OWN wallet whether that exact note landed in MY spendable set with enough value. Trustless: the wire
+// claim proves nothing; the wallet's own scan is the only authority.
+async function verifyFeeAsync(a){ const c=S.chats[a]; if(!c||!c.request||!c.pendingFeeCm) return;
+  try{ const r=await rpc('noteOwned',{cm:c.pendingFeeCm});
+    if(r&&r.owned&&Math.round((r.amount_usdm||0)*1e6)>=S.myFeeMicro){
+      c.request=false; S.accepted.add(a); persistAccept(a);
+      renderList(); if(S.sel===a) paintHead();
+      toast(displayName(a)+' paid your '+feeUsdm(S.myFeeMicro)+' USDm DM fee 💸');
+    }
+  }catch(e){}
+}
+
 const $=s=>document.querySelector(s);
 function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('on'); setTimeout(()=>t.classList.remove('on'),2400); }
 function short(a){ return a?(a.slice(0,10)+'…'+a.slice(-6)):''; }
 function avaColor(a){ let h=0; for(const c of (a||'')) h=(h*31+c.charCodeAt(0))>>>0; const g=[[255,122,0],[181,62,0],[255,171,77],[210,90,20],[150,50,10]][h%5]; return `linear-gradient(135deg,rgb(${g[0]},${g[1]},${g[2]}),#2a1405)`; }
 function initial(a){ return (a||'?').replace(/^@/,'').slice(0,2).toUpperCase(); }
-function displayName(a){ const c=S.chats[a]; return (c&&c.name)||('@'+short(a)); }
+function displayName(a){ const p=profiles[a]; if(p&&p.display) return p.display;
+  const c=S.chats[a]; return (c&&c.name)||('@'+short(a)); }
 function escapeHtml(s){ return (s||'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function hash(s){ let h=0; for(const c of (s||'')) h=(h*131+c.charCodeAt(0))>>>0; return h.toString(36); }
 
@@ -457,7 +545,8 @@ function renderList(){
                     :'No chats yet.<br>Tap <b>✚</b> to start one with a @username or address.';
     list.appendChild(e); return;
   }
-  for(const c of arr){ const last=c.msgs[c.msgs.length-1]; const el=document.createElement('div'); el.className='chat'+(S.sel===c.addr?' sel':'');
+  const reqs=arr.filter(c=>c.request&&!S.blocked.has(c.addr)), normal=arr.filter(c=>!c.request);
+  const row=(c)=>{ const last=c.msgs[c.msgs.length-1]; const el=document.createElement('div'); el.className='chat'+(S.sel===c.addr?' sel':'');
     const grp=isGroup(c.addr);
     let body;
     if(!last) body=grp?'Group ready':'New chat';
@@ -465,18 +554,83 @@ function renderList(){
     else if(last.media) body={sticker:(last.media.e||'')+' Sticker',vid:'🎬 Video',gif:'🎞️ GIF',img:'📷 Photo'}[last.media.t]||'📎 Attachment';
     else body=escapeHtml(last.body||'');
     const lastTxt=(last&&grp&&last.from&&!last.out?escapeHtml(short(last.from))+': ':'')+body;
-    const av=grp?`<div class="ava" style="background:${avaColor(c.addr)}">👥</div>`:`<div class="ava" style="background:${avaColor(c.addr)}">${initial(displayName(c.addr))}</div>`;
-    el.innerHTML=`${av}<div class="meta"><div class="name">${escapeHtml(displayName(c.addr))}</div><div class="last">${lastTxt}</div></div>`;
-    el.onclick=()=>selectChat(c.addr); list.appendChild(el); }
+    const av=`<div class="ava idico" style="background:${avaColor(c.addr)}">${avatarHtml(c.addr,grp,22)}</div>`;
+    const blocked=S.blocked.has(c.addr)?'<span class="pill">blocked</span>':'';
+    el.innerHTML=`${av}<div class="meta"><div class="name">${escapeHtml(displayName(c.addr))}${blocked}</div><div class="last">${lastTxt}</div></div>`;
+    el.onclick=()=>selectChat(c.addr); list.appendChild(el);
+    if(!grp) getProfile(c.addr); };
+  if(!want&&reqs.length){ const h=document.createElement('div'); h.className='reqhdr'; h.textContent='Message requests'; list.appendChild(h);
+    for(const c of reqs){ const el=document.createElement('div'); el.className='chat'+(S.sel===c.addr?' sel':'');
+      el.innerHTML=`<div class="ava idico" style="background:${avaColor(c.addr)}">${avatarHtml(c.addr,false,22)}</div>
+        <div class="meta"><div class="name">${escapeHtml(displayName(c.addr))}</div><div class="last">wants to message you${S.myFeeMicro>0?' · fee unpaid':''}</div></div>
+        <div class="reqact"><button class="btn" data-acc="${escapeHtml(c.addr)}">✓</button><button class="btn" data-blk="${escapeHtml(c.addr)}">🚫</button></div>`;
+      el.onclick=(ev)=>{ const t=ev.target;
+        if(t.dataset&&t.dataset.acc){ acceptRequest(t.dataset.acc); return; }
+        if(t.dataset&&t.dataset.blk){ setBlocked(t.dataset.blk,true); return; }
+        selectChat(c.addr); };
+      list.appendChild(el); getProfile(c.addr); }
+    const h2=document.createElement('div'); h2.className='reqhdr'; h2.textContent='Chats'; list.appendChild(h2);
+  }
+  for(const c of normal) row(c);
 }
 function selectChat(a){ S.sel=a; if(!isGroup(a)) ensureChat(a); $('#welcome').style.display='none'; $('#conv').style.display='flex';
-  const grp=isGroup(a)?S.chats[a].group:null;
-  $('#cAva').style.background=avaColor(a); $('#cAva').textContent=grp?'👥':initial(displayName(a));
+  paintHead(); if(!isGroup(a)){ getProfile(a).then(()=>{ if(S.sel===a){ paintHead(); updateFeeBar(); } }); }
+  $('#side').classList.add('hide'); renderList(); renderMsgs(); updateFeeBar(); $('#input').focus(); }
+// Header paint — reads the LIVE profile (display+bio), block state, and group vs DM chrome. One function so
+// every state change (profile lands, block toggled, request accepted) repaints identically.
+function paintHead(){ const a=S.sel; if(!a) return; const grp=isGroup(a)?S.chats[a].group:null;
+  const av=$('#cAva'); av.classList.add('idico'); av.style.background=avaColor(a); av.innerHTML=avatarHtml(a,!!grp,26);
   $('#cName').textContent=displayName(a);
   if(grp){ const owner=grp.owner===S.me; $('#cSub').innerHTML='<span class="lock">🔒</span> '+grp.members.length+' member'+(grp.members.length===1?'':'s')+' · sealed per-member';
-    $('#payBtn').style.display='none'; $('#addBtn').style.display=owner?'inline-flex':'none'; }
-  else { $('#cSub').innerHTML='<span class="lock">🔒</span> '+short(a)+' · post-quantum sealed'; $('#payBtn').style.display='inline-flex'; $('#addBtn').style.display='none'; }
-  $('#side').classList.add('hide'); renderList(); renderMsgs(); $('#input').focus(); }
+    $('#payBtn').style.display='none'; $('#addBtn').style.display=owner?'inline-flex':'none'; $('#menuBtn').style.display='none'; }
+  else { const p=profiles[a]; const bio=p&&p.bio?escapeHtml(p.bio)+' · ':'';
+    const blocked=S.blocked.has(a)?' · <b style="color:#ff6d6d">blocked</b>':'';
+    $('#cSub').innerHTML='<span class="lock">🔒</span> '+bio+short(a)+blocked;
+    $('#payBtn').style.display='inline-flex'; $('#addBtn').style.display='none'; $('#menuBtn').style.display='inline-flex'; }
+}
+// The context menu: Block/Unblock (+ copy address). Rebuilt on open so it always reflects current state.
+function buildMenu(){ const m=$('#chatMenu'), a=S.sel; if(!a||isGroup(a)){ m.classList.remove('on'); return; }
+  const blocked=S.blocked.has(a);
+  m.innerHTML='<div class="mrow" id="mCopy">📋 Copy address</div>'
+    +(blocked?'<div class="mrow" id="mBlk">✓ Unblock</div>':'<div class="mrow danger" id="mBlk">🚫 Block</div>');
+  $('#mCopy').onclick=()=>{ try{navigator.clipboard.writeText(a);}catch(e){} m.classList.remove('on'); toast('Address copied'); };
+  $('#mBlk').onclick=()=>{ m.classList.remove('on'); setBlocked(a,!blocked); };
+}
+// The bar above the composer: EITHER the sender-side DM-fee prompt (their fee, your choice to pay) OR the
+// recipient-side request bar (accept / block). Hidden in every other state.
+function updateFeeBar(){ const bar=$('#feebar'), a=S.sel; bar.classList.remove('on'); bar.innerHTML=''; if(!a||isGroup(a)) return;
+  const c=S.chats[a]; if(!c) return;
+  if(c.request&&!S.blocked.has(a)){
+    bar.innerHTML='<span>⏳ <b>'+escapeHtml(displayName(a))+'</b> wants to message you'+(S.myFeeMicro>0?' — your '+feeUsdm(S.myFeeMicro)+' USDm DM fee is unpaid':'')+'.</span>'
+      +'<span class="reqact"><button class="btn" id="fbAcc">✓ Accept</button><button class="btn" id="fbBlk">🚫 Block</button></span>';
+    bar.classList.add('on');
+    $('#fbAcc').onclick=()=>{ acceptRequest(a); updateFeeBar(); };
+    $('#fbBlk').onclick=()=>{ setBlocked(a,true); updateFeeBar(); };
+    return;
+  }
+  const p=profiles[a];
+  const isNew=!c.msgs.some(x=>x.out)&&!c.msgs.some(x=>!x.out);
+  if(p&&p.fee_micro>0&&isNew&&!c.feeCm&&a!==S.me){
+    bar.innerHTML='<span>💸 <b>'+escapeHtml(displayName(a))+'</b> asks <b>'+feeUsdm(p.fee_micro)+' USDm</b> to accept messages from new contacts.</span>'
+      +'<span class="reqact"><button class="btn pay" id="fbPay">Pay &amp; unlock chat</button></span>';
+    bar.classList.add('on');
+    $('#fbPay').onclick=()=>payDmFee(a,p.fee_micro);
+  }
+}
+// Sender side of the fee gate: a REAL private payment of exactly the recipient's published fee. The wallet
+// returns the recipient note's commitment (`recipient_cm`) — the receipt our first letter carries so THEIR
+// wallet can verify the money truly landed in THEIR OWN spendable set. Trustless on both ends.
+async function payDmFee(a,mu){ const b=$('#fbPay'); if(b){ b.disabled=true; b.textContent='Paying…'; }
+  try{ const r=await rpc('transfer',{to:a,amount:mu/1e6});
+    const cm=(r&&r.recipient_cm)||null;
+    if(!cm) throw new Error('no payment receipt returned');
+    S.chats[a].feeCm=cm;
+    rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:a,k:'pay',amt:mu/1e6,b:'DM fee',cm:undefined,feeCm:cm})}).catch(()=>{});
+    addMsg(a,{id:'fee:'+Date.now(),out:true,body:'DM fee',pay:feeUsdm(mu),t:Date.now()});
+    renderList(); renderMsgs(); updateFeeBar(); toast('Fee paid — your letters now reach them 🔒');
+  }catch(e){ toast('Fee payment failed: '+e.message); }
+  finally{ if(b){ b.disabled=false; b.textContent='Pay & unlock chat'; } }
+}
 function renderMsgs(){ const c=S.chats[S.sel], box=$('#msgs'); if(!c){box.innerHTML='';return;} box.innerHTML='';
   const grp=isGroup(S.sel);
   for(const m of c.msgs){ const row=document.createElement('div'); row.className='row '+(m.out?'out':'in');
@@ -490,10 +644,36 @@ function renderMsgs(){ const c=S.chats[S.sel], box=$('#msgs'); if(!c){box.innerH
   box.scrollTop=box.scrollHeight; }
 
 async function boot(){
-  try{ const r=await rpc('letterAddress'); S.me=r&&r.address; $('#me').innerHTML='<span class="dot"></span>You · '+short(S.me); $('#me').classList.add('on'); }
+  try{ const r=await rpc('letterAddress'); S.me=r&&r.address; paintMe(); $('#me').classList.add('on');
+    getProfile(S.me,true).then(pr=>{ if(pr){ S.myProfile=pr; S.myFeeMicro=pr.fee_micro||0; paintMe(); } });
+  }
   catch(e){ const r=(e&&e.message)?String(e.message).slice(0,60):'no bridge'; $('#me').innerHTML='<span class="dot"></span>Open in the wallet · '+r; $('#me').title=r; }
   restoreHistory(); // fire-and-forget: the seed-restore walk fills chats as pages land
   await refresh(); setInterval(refresh,2000);
+}
+function paintMe(){ if(!S.me) return; const nm=(S.myProfile&&S.myProfile.display)||('You · '+short(S.me));
+  $('#me').innerHTML='<span class="dot"></span>'+escapeHtml(nm)+' <span style="opacity:.55;font-size:11px">· profile ▾</span>'; }
+// ── PROFILE EDITOR — publish display/bio/DM-fee to the chain (wallet-signed; only your key can ever write it).
+function openProfile(){ if(!S.me){ toast('Open Letter inside the wallet first'); return; }
+  const pr=S.myProfile||{};
+  $('#pfAva').style.background=avaColor(S.me); $('#pfAva').innerHTML=avatarHtml(S.me,false,30);
+  $('#pfName').value=pr.display||''; $('#pfBio').value=pr.bio||'';
+  $('#pfFee').value=pr.fee_micro?String(pr.fee_micro/1e6):''; $('#pfErr').textContent='';
+  openModal('profileModal'); setTimeout(()=>$('#pfName').focus(),60);
+}
+async function saveProfile(){ const err=$('#pfErr'); err.textContent='';
+  const display=($('#pfName').value||'').trim(), bio=($('#pfBio').value||'').trim();
+  const feeU=parseFloat($('#pfFee').value||'0')||0;
+  if(!display){ err.textContent='Pick a display name'; return; }
+  if(feeU<0){ err.textContent='The fee cannot be negative'; return; }
+  $('#pfSave').disabled=true;
+  try{ await rpc('profileSet',{display,bio,feeMicro:Math.round(feeU*1e6)});
+    S.myProfile={display,bio,fee_micro:Math.round(feeU*1e6),ts:Date.now()};
+    profiles[S.me]=S.myProfile; S.myFeeMicro=S.myProfile.fee_micro;
+    paintMe(); closeModal('profileModal'); renderList();
+    toast('Profile published on-chain 🔒'+(S.myFeeMicro>0?' · DM fee '+feeUsdm(S.myFeeMicro)+' USDm':''));
+  }catch(e){ err.textContent=e.message||'Publish failed'; }
+  finally{ $('#pfSave').disabled=false; }
 }
 // ⭐ CHAT HISTORY FROM THE CHAIN — your wallet IS your login: page the on-chain letter columns from the
 // start, open only what is sealed to you (the wallet authenticates every sender), and rebuild the full
@@ -520,6 +700,16 @@ async function restoreHistory(){ if(!S.me) return;
 function routeLetter(from,msg,tag,ts,inCm){
   const ch=parseChunk(msg);
   if(ch){ let changed=false; takeChunk(ch,whole=>{ changed=routeLetter(from,whole,tag+':w',ts)||changed; }); return changed; }
+  // BLOCK / ACCEPT ledger letters — sealed to MYSELF, applied from BOTH live inbox and chain history, so a
+  // block on one device is a block on every device, forever, with zero local storage. Authenticated self-origin.
+  const bl=/^BLOCK1:(.*)$/s.exec(msg||'');
+  if(bl){ if(from!==S.me) return false; let o=null; try{o=JSON.parse(bl[1]);}catch(e){ return false; }
+    if(!o||!o.a) return false;
+    if(o.on){ S.blocked.add(o.a); if(S.chats[o.a]) S.chats[o.a].request=false; } else S.blocked.delete(o.a);
+    return true; }
+  const ac=/^ACC1:(.*)$/s.exec(msg||'');
+  if(ac){ if(from!==S.me) return false; let o=null; try{o=JSON.parse(ac[1]);}catch(e){ return false; }
+    if(!o||!o.a) return false; S.accepted.add(o.a); if(S.chats[o.a]) S.chats[o.a].request=false; return true; }
   const sc=/^SENT1:(.*)$/s.exec(msg||'');
   if(sc){ // my own sent-copy (sealed to MYSELF at send time) — the on-chain record of MY side of the chat.
     if(from!==S.me||!tag.startsWith('h')) return false; // authenticated self-origin, history-restore only
@@ -528,6 +718,7 @@ function routeLetter(from,msg,tag,ts,inCm){
     const key=o.g?('grp:'+o.g):o.to;
     if(o.g&&!S.chats[key]) S.chats[key]={addr:key,name:o.n||'Group',group:{gid:o.g,owner:S.me,members:o.m||[S.me],seq:1,handle:o.h||''},msgs:[],last:Date.now()};
     if(o.cm) cmNote(sentCms,key,o.cm);
+    if(o.feeCm) ensureChat(key).feeCm=o.feeCm; // the DM-fee receipt survives restore — never double-charged
     if(o.k==='media'&&o.md) return addMsg(key,{id:'so:'+hash(msg),out:true,body:'',media:o.md,pay:null,t:ts});
     if(o.k==='pay') return addMsg(key,{id:'sp:'+hash(msg),out:true,body:o.b||'',pay:String(o.amt||''),t:ts});
     return addMsg(key,{id:'st:'+hash(msg),out:true,body:o.b||'',pay:null,t:ts});
@@ -544,13 +735,17 @@ function routeLetter(from,msg,tag,ts,inCm){
     if(gp.k==='media'&&gp.md) return addMsg('grp:'+gp.g,{id:'gm:'+gp.g+':'+from+':'+hash(msg),out:false,from,body:'',media:gp.md,pay:null,t:ts});
     return true; // roster/control — the group now exists/updated in the list
   }
+  // ⛔ BLOCKED SENDERS STOP HERE — their DMs (text, media, pay chips) are dropped before they can touch a
+  //    chat. Group letters were already handled above: a block silences the DM lane, exactly like Telegram.
+  if(from!==S.me&&S.blocked.has(from)) return false;
   const md=/^MEDIA1:(.*)$/s.exec(msg||'');
   if(md){ let mo=null; try{mo=JSON.parse(md[1]);}catch(e){}
     return !!(mo&&addMsg(from,{id:'m:'+from+':'+hash(msg),out:false,body:'',media:mo,pay:null,t:ts})); }
   let body=msg,pay=null; const pm=/^PAY:([0-9.]+)(.*)$/s.exec(msg||''); if(pm){pay=pm[1];body=pm[2];}
+  let feeCmIn=null;
   const m1=/^MSG1:(.*)$/s.exec(body||'');
   if(m1){ let o=null; try{o=JSON.parse(m1[1]);}catch(e){}
-    if(o){ body=o.b||'';
+    if(o){ body=o.b||''; feeCmIn=o.fee||null;
       // PROVEN-ACK THREAD MERGE: the sender echoed the content hash of a letter WE sealed to some chat T.
       // Only T's true owner could hold that hash, so `from` IS T's canonical identity — merge T into it.
       if(o.ack){ for(const T of Object.keys(sentCms)){ if(T!==from&&sentCms[T]&&sentCms[T].has(o.ack)){
@@ -562,23 +757,40 @@ function routeLetter(from,msg,tag,ts,inCm){
       } } }
     }
   }
+  // STRANGER CLASSIFICATION (recipient side of the DM-fee gate): a first-contact sender lands in Message
+  // Requests when I charge a fee — unless their letter carries a fee receipt my OWN wallet verifies. A paid
+  // PAY chip counts too (the money itself is the credential). No fee set → open DMs, straight to Chats.
+  const known=from===S.me||S.accepted.has(from)||(S.chats[from]&&S.chats[from].msgs.some(x=>x.out&&!String(x.id).startsWith('fee:')));
   const hit=addMsg(from,{id:'t:'+from+':'+hash(msg),out:false,body,pay,t:ts});
+  if(hit&&!known&&S.myFeeMicro>0&&!isGroup(from)){
+    const c=S.chats[from];
+    if(pay&&parseFloat(pay)*1e6>=S.myFeeMicro){ S.accepted.add(from); persistAccept(from); }
+    else if(!c.request&&!S.accepted.has(from)){ c.request=true; if(feeCmIn){ c.pendingFeeCm=feeCmIn; verifyFeeAsync(from); } }
+    else if(feeCmIn&&c.request){ c.pendingFeeCm=feeCmIn; verifyFeeAsync(from); }
+  }
   if(hit&&inCm&&S.chats[from]){ cmNote(recvCms,from,inCm); S.chats[from].lastInCm=inCm; }
   return hit;
 }
 async function refresh(){
   try{ const r=await rpc('letterInbox'); const msgs=(r&&r.messages)||[]; let changed=false;
     for(let i=0;i<msgs.length;i++){ if(routeLetter(msgs[i].from,msgs[i].msg,'live',Date.now(),msgs[i].cm)) changed=true; }
-    if(changed){ renderList(); if(S.sel) renderMsgs(); }
+    if(changed){ renderList(); if(S.sel){ renderMsgs(); updateFeeBar(); } }
   }catch(e){}
 }
 async function doSend(){ const t=$('#input'), body=(t.value||'').trim(); if(!body||!S.sel) return; t.value=''; autoGrow(t);
   const b=$('#sendBtn'); b.classList.add('sealing');
   try{
     if(isGroup(S.sel)){ await sendGroup(S.chats[S.sel].group.gid,body); }
-    else { addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
-      const ack=(S.chats[S.sel]&&S.chats[S.sel].lastInCm)||null;
-      const r=await rpc('letterSend',{to:S.sel,msg:'MSG1:'+JSON.stringify(ack?{b:body,ack}:{b:body})});
+    else { const c0=S.chats[S.sel];
+      if(S.blocked.has(S.sel)){ toast('You blocked this contact — unblock to write'); $('#sendBtn').classList.remove('sealing'); return; }
+      const p0=profiles[S.sel];
+      if(p0&&p0.fee_micro>0&&c0&&!c0.feeCm&&!c0.msgs.some(x=>!x.out)&&!c0.msgs.some(x=>x.out)&&S.sel!==S.me){
+        t.value=body; updateFeeBar(); toast('They charge a DM fee — pay it above to unlock the chat'); $('#sendBtn').classList.remove('sealing'); return; }
+      addMsg(S.sel,{id:'out:'+Date.now(),out:true,body,pay:null,t:Date.now()}); renderList(); renderMsgs();
+      const ack=(c0&&c0.lastInCm)||null;
+      const env={b:body}; if(ack) env.ack=ack;
+      if(c0&&c0.feeCm&&!c0.msgs.some(x=>!x.out)) env.fee=c0.feeCm; // first-contact letters carry the fee receipt
+      const r=await rpc('letterSend',{to:S.sel,msg:'MSG1:'+JSON.stringify(env)});
       if(r&&r.cm) cmNote(sentCms,S.sel,r.cm);
       rpc('letterSend',{to:S.me,msg:'SENT1:'+JSON.stringify({to:S.sel,k:'msg',b:body,cm:(r&&r.cm)||undefined})}).catch(()=>{}); refresh(); }
   }catch(e){ toast('Send failed: '+e.message); } finally{ b.classList.remove('sealing'); }
@@ -618,7 +830,7 @@ function qDrop(){ const v=($('#q').value||'').trim(), d=$('#qdrop'); d.innerHTML
   const vl=v.toLowerCase(); const rows=[];
   for(const c of Object.values(S.chats)){
     const nm=displayName(c.addr); if(!(nm.toLowerCase().includes(vl)||c.addr.toLowerCase().includes(vl))) continue;
-    rows.push({av:nm.replace('@','').slice(0,2).toUpperCase(),b:nm,s:isGroup(c.addr)?'Group chat':'Chat',act:()=>{ openChat(c.addr); }});
+    rows.push({av:isGroup(c.addr)?'👥':null,ico:isGroup(c.addr)?null:c.addr,b:nm,s:isGroup(c.addr)?'Group chat':'Chat',act:()=>{ openChat(c.addr); }});
     if(rows.length>=5) break;
   }
   if(v.startsWith('@')&&v.length>1){
@@ -630,7 +842,8 @@ function qDrop(){ const v=($('#q').value||'').trim(), d=$('#qdrop'); d.innerHTML
   }
   if(!rows.length){ d.classList.remove('on'); return; }
   for(const r of rows){ const el=document.createElement('div'); el.className='qrow';
-    el.innerHTML='<div class="qa">'+escapeHtml(r.av)+'</div><div class="qt"><b>'+escapeHtml(r.b)+'</b><span>'+escapeHtml(r.s)+'</span></div>';
+    const av=r.ico?('<div class="qa idico">'+identicon(r.ico,18)+'</div>'):('<div class="qa">'+escapeHtml(r.av||'?')+'</div>');
+    el.innerHTML=av+'<div class="qt"><b>'+escapeHtml(r.b)+'</b><span>'+escapeHtml(r.s)+'</span></div>';
     el.onclick=()=>{ d.classList.remove('on'); $('#q').value=''; renderList(); r.act(); }; d.appendChild(el); }
   d.classList.add('on'); }
 function openChat(addr){ selectChat(addr); renderList(); }
@@ -657,7 +870,11 @@ $('#stickerBtn').onclick=()=>{ buildStickers(); $('#stickers').classList.toggle(
 document.addEventListener('click',e=>{ if(!e.target.closest('#stickers')&&!e.target.closest('#stickerBtn')) $('#stickers').classList.remove('on'); });
 $('#input').addEventListener('input',e=>autoGrow(e.target));
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
-$('#me').onclick=()=>{ if(S.me){ try{navigator.clipboard.writeText(S.me);}catch(e){} toast('Your Letter address copied'); } };
+$('#me').onclick=openProfile;
+$('#pfSave').onclick=saveProfile; $('#pfCancel').onclick=()=>closeModal('profileModal');
+$('#pfCopy').onclick=()=>{ if(S.me){ try{navigator.clipboard.writeText(S.me);}catch(e){} toast('Your Letter address copied'); } };
+$('#menuBtn').onclick=(ev)=>{ ev.stopPropagation(); buildMenu(); $('#chatMenu').classList.toggle('on'); };
+document.addEventListener('click',e=>{ if(!e.target.closest('.menuwrap')) $('#chatMenu').classList.remove('on'); });
 boot();
 </script>
 </body>
