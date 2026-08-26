@@ -46,6 +46,9 @@
   .mark svg{width:100%;height:100%;position:relative;z-index:1;filter:drop-shadow(0 0 8px var(--glow))}
   @keyframes pulse{0%,100%{filter:drop-shadow(0 0 6px var(--glow))}50%{filter:drop-shadow(0 0 15px var(--glow))}}
   .me{margin-left:auto;font-size:11px;color:var(--muted);text-align:right;max-width:150px;cursor:pointer;line-height:1.35}
+  .gearbtn{flex:0 0 auto;width:28px;height:28px;margin-left:6px;border-radius:9px;border:1px solid rgba(240,116,30,.75);background:rgba(240,116,30,.14);color:#f0741e;font-size:15px;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;box-shadow:0 0 8px rgba(240,116,30,.55),0 0 18px rgba(240,116,30,.28);animation:gearGlow 2.4s ease-in-out infinite;transition:color .15s,box-shadow .15s,background .15s}
+  .gearbtn:hover{color:#fff;background:rgba(240,116,30,.32);box-shadow:0 0 12px rgba(240,116,30,.9),0 0 26px rgba(240,116,30,.5)}
+  @keyframes gearGlow{0%,100%{box-shadow:0 0 8px rgba(240,116,30,.55),0 0 18px rgba(240,116,30,.28)}50%{box-shadow:0 0 13px rgba(240,116,30,.95),0 0 30px rgba(240,116,30,.5)}}
   .me .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--dim);margin-right:5px;vertical-align:middle}
   .me.on .dot{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:blink 2s ease-in-out infinite}
   @keyframes blink{0%,100%{opacity:1}50%{opacity:.45}}
@@ -165,7 +168,7 @@
   .modal input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(255,122,0,.12)}
   .modal .actions{display:flex;gap:9px;justify-content:flex-end;margin-top:18px}
   .modal .err{color:#ff6b6b;font-size:12px;min-height:16px;margin-top:8px}
-  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--glass2);backdrop-filter:blur(20px);color:var(--text);padding:11px 18px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5);font-size:13px;opacity:0;transition:.25s;z-index:60;border:1px solid rgba(255,122,0,.3)}
+  .toast{pointer-events:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(10px);background:var(--glass2);backdrop-filter:blur(20px);color:var(--text);padding:11px 18px;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.5);font-size:13px;opacity:0;transition:.25s;z-index:60;border:1px solid rgba(255,122,0,.3)}
   .toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
   ::-webkit-scrollbar{width:8px}
   ::-webkit-scrollbar-thumb{background:rgba(255,122,0,.25);border-radius:8px}
@@ -193,6 +196,7 @@
     <div class="side-top">
       <div class="brand"><span class="mark"><svg><use href="#letterMark"/></svg></span><span class="bt">Letter</span></div>
       <div class="me" id="me"><span class="dot"></span>connecting…</div>
+      <button class="gearbtn" id="gearBtn" title="Profile &amp; settings" aria-label="Profile and settings">⚙</button>
     </div>
     <div class="search"><input id="q" placeholder="Search, @username, or paste address" autocomplete="off"><button class="newbtn" id="newBtn" title="New chat">✚</button><div class="qdrop" id="qdrop"></div></div>
     <div class="tabs">
@@ -227,12 +231,14 @@
       </div>
       <div class="msgs" id="msgs"></div>
       <div class="stickers-panel" id="stickers"></div>
+      <div class="stickers-panel" id="emojis"></div>
       <div class="feebar" id="feebar"></div>
       <div class="composer">
         <button class="icobtn" id="attachBtn" title="Send a photo, video or GIF">📎</button>
+        <button class="icobtn" id="emojiBtn" title="Emoji">😀</button>
         <button class="icobtn" id="stickerBtn" title="Stickers">🙂</button>
         <input type="file" id="fileInput" accept="image/*,video/*" multiple style="display:none">
-        <textarea id="input" rows="1" placeholder="Write a letter…  (it's sealed before it leaves your device)"></textarea>
+        <textarea id="input" rows="1" placeholder="Write a letter… (it's sealed before it leaves your device)"></textarea>
         <button class="send" id="sendBtn" title="Send">➤</button>
       </div>
     </div>
@@ -683,9 +689,15 @@ function pickProfilePhoto(file){ const img=new Image();
     let q=0.82, b64=c.toDataURL('image/jpeg',q).split(',')[1];
     while(b64.length>23000&&q>0.4){ q-=0.12; b64=c.toDataURL('image/jpeg',q).split(',')[1]; }
     if(b64.length>23000){ $('#pfErr').textContent='That image will not compress small enough — try another.'; return; }
-    _pfAvatar=b64; _pfPaintAva(); URL.revokeObjectURL(img.src); };
+    _pfAvatar=b64; _pfPaintAva(); };
   img.onerror=()=>{ $('#pfErr').textContent='Could not read that image.'; };
-  img.src=URL.createObjectURL(file);
+  // data: URL via FileReader — the same read path chat media uses (fileToMedia). The old
+  // URL.createObjectURL preview was refused by the sovereign CSP (img-src 'self' data:, no blob:),
+  // which surfaced as "Could not read that image" on every real photo pick.
+  const r=new FileReader();
+  r.onload=()=>{ img.src=r.result; };
+  r.onerror=()=>{ $('#pfErr').textContent='Could not read that image.'; };
+  r.readAsDataURL(file);
 }
 async function saveProfile(){ const err=$('#pfErr'); err.textContent='';
   const display=($('#pfName').value||'').trim(), bio=($('#pfBio').value||'').trim();
@@ -892,11 +904,15 @@ $('#payGo').onclick=doPay; $('#payCancel').onclick=()=>closeModal('payModal');
 $('#sendBtn').onclick=doSend;
 $('#attachBtn').onclick=()=>$('#fileInput').click();
 $('#fileInput').addEventListener('change',e=>{ const fs=[...e.target.files]; e.target.value=''; if(fs.length) doAttach(fs); });
-$('#stickerBtn').onclick=()=>{ buildStickers(); $('#stickers').classList.toggle('on'); };
-document.addEventListener('click',e=>{ if(!e.target.closest('#stickers')&&!e.target.closest('#stickerBtn')) $('#stickers').classList.remove('on'); });
+const EMOJIS=['😀','😂','😅','😊','😉','😍','🥰','😘','😎','🤩','🥳','😤','😢','😭','😱','🤔','🤫','🫡','😴','🤝','👍','👎','👏','🙏','💪','👀','❤️','🔥','⚡','✨','🎉','💯','✅','❌','💸','🤑','🦀','🔒','🚀','🌙'];
+function insertEmoji(e){ const i=$('#input'); const st=i.selectionStart??i.value.length, en=i.selectionEnd??st; i.value=i.value.slice(0,st)+e+i.value.slice(en); i.selectionStart=i.selectionEnd=st+e.length; i.focus(); i.dispatchEvent(new Event('input',{bubbles:true})); }
+function buildEmojis(){ const p=$('#emojis'); if(p.childElementCount) return; for(const e of EMOJIS){ const d=document.createElement('div'); d.className='s'; d.textContent=e; d.onclick=()=>insertEmoji(e); p.appendChild(d); } }
+$('#emojiBtn').onclick=()=>{ buildEmojis(); $('#emojis').classList.toggle('on'); $('#stickers').classList.remove('on'); };
+$('#stickerBtn').onclick=()=>{ buildStickers(); $('#stickers').classList.toggle('on'); $('#emojis').classList.remove('on'); };
+document.addEventListener('click',e=>{ if(!e.target.closest('#stickers')&&!e.target.closest('#stickerBtn')) $('#stickers').classList.remove('on'); if(!e.target.closest('#emojis')&&!e.target.closest('#emojiBtn')) $('#emojis').classList.remove('on'); });
 $('#input').addEventListener('input',e=>autoGrow(e.target));
 $('#input').addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); doSend(); } });
-$('#me').onclick=openProfile;
+$('#me').onclick=openProfile; $('#gearBtn').onclick=openProfile;
 $('#pfSave').onclick=saveProfile; $('#pfCancel').onclick=()=>closeModal('profileModal');
 $('#pfPhoto').onclick=()=>$('#pfFile').click();
 $('#pfPhotoDel').onclick=()=>{ _pfAvatar=''; _pfPaintAva(); };
